@@ -31,19 +31,25 @@ if err := client.Get(ctx, "/glossary", nil, &result); err != nil {
 }
 ```
 
-The client makes one HTTP attempt per operation and does not follow redirects.
-Resource URLs must remain within the configured API origin and path prefix.
-Query parameters use `url.Values`; malformed encoding in a resource URL is rejected.
+The client retries transport failures, incomplete successful-response reads,
+429, and 5xx responses, with a default limit of four attempts. Each attempt is
+one `http.Client.Do` call and follows at most three validated redirects.
+Exponential backoff uses jitter and honors `Retry-After` on retryable responses;
+the caller's context deadline also bounds retry waits.
+
+Resource URLs and redirects must remain within the configured API origin and
+path prefix. Query parameters use `url.Values`; malformed encoding in a resource
+URL is rejected.
 
 ### Configuration
 
 - `WithHTTPClient`: replace the default HTTP client, whose timeout is 30 seconds.
 - `WithBaseURL`: replace the default `https://api.weather.gov` origin.
-- `WithMaxResponseBytes`: replace the 32 MiB successful-response limit.
+- `WithRetryPolicy`: replace the default four attempts, 1s initial delay, and 30s maximum backoff.
 
 Failures return `*nws.RequestError`; inspect them with `errors.As` and use
-`errors.Is` for cancellation. `Retryable` classifies the cause but does not
-initiate another attempt.
+`errors.Is` for cancellation. `Retryable` describes the cause, not whether attempts remain. Avoid adding an
+unbounded outer retry loop; each call already owns its attempt budget.
 
 ## Testing
 
