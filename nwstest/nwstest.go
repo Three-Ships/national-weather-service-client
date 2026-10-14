@@ -5,11 +5,13 @@ package nwstest
 
 import (
 	"bytes"
-	nws "github.com/Three-Ships/national-weather-service-client"
 	"io"
 	"net/http"
 	"os"
 	"testing"
+	"time"
+
+	nws "github.com/Three-Ships/national-weather-service-client"
 )
 
 // Transport implements http.RoundTripper with a function so tests can replace
@@ -18,11 +20,16 @@ type Transport func(*http.Request) (*http.Response, error)
 
 func (f Transport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
-// NewClient constructs a client for HTTP tests. Options configure its HTTP policy.
-// Supply a fake transport or local test server to avoid contacting NWS.
+// NewClient uses three attempts with nanosecond backoff.
+// Options override these defaults. Invalid configuration fails the test.
+// It does not replace HTTP: supply nws.WithHTTPClient with a fake Transport or
+// nws.WithBaseURL with a local test server to avoid contacting NWS.
 func NewClient(t testing.TB, options ...nws.Option) *nws.Client {
 	t.Helper()
-	c, err := nws.NewClient("test-reader/1.0 (test@example.com)", options...)
+	defaults := []nws.Option{
+		nws.WithRetryPolicy(nws.RetryPolicy{MaxAttempts: 3, InitialDelay: time.Nanosecond, MaxDelay: time.Nanosecond}),
+	}
+	c, err := nws.NewClient("test-reader/1.0 (test@example.com)", append(defaults, options...)...)
 	if err != nil {
 		t.Fatal(err)
 	}

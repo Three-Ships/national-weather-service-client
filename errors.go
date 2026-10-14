@@ -16,10 +16,11 @@ type ProblemDetail struct {
 	CorrelationID string `json:"correlationId"`
 }
 
-// RequestError reports a request or decoding failure. Inspect it with errors.As;
-// errors.Is can inspect the wrapped cause. Retryable describes the cause.
-// Attempts counts HTTP attempts. StatusCode is zero when no HTTP status is
-// available. Body contains at most 64 KiB of an HTTP error response.
+// RequestError reports a failure after the client has applied its retry policy.
+// Inspect it with errors.As; errors.Is can inspect the wrapped cause. Retryable
+// describes the cause, not whether attempts remain. Attempts counts HTTP attempts,
+// including redirects. StatusCode is zero when no HTTP
+// status is available. Body contains at most 64 KiB of an HTTP error response.
 type RequestError struct {
 	URL        string
 	Attempts   int

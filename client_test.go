@@ -9,12 +9,15 @@ import (
 	"github.com/Three-Ships/national-weather-service-client/nwstest"
 	"io"
 	"mime"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func ExampleClient_Get() {
@@ -54,6 +57,8 @@ func TestNewClientValidation(t *testing.T) {
 		{"base query", "reader", nws.WithBaseURL("https://weather.gov?x=y")},
 		{"base fragment", "reader", nws.WithBaseURL("https://weather.gov#fragment")},
 		{"zero body limit", "reader", nws.WithMaxResponseBytes(0)},
+		{"zero attempts", "reader", nws.WithRetryPolicy(nws.RetryPolicy{})},
+		{"reversed delays", "reader", nws.WithRetryPolicy(nws.RetryPolicy{MaxAttempts: 1, InitialDelay: time.Second, MaxDelay: time.Millisecond})},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -162,12 +167,85 @@ func TestFetchValidation(t *testing.T) {
 	}
 }
 
+func TestHTTPRetryClassification(t *testing.T) {
+	tests := []struct {
+		name         string
+		status       int
+		wantAttempts int
+		retryable    bool
+	}{
+		{"bad request", 400, 1, false},
+		{"forbidden", 403, 1, false},
+		{"not found", 404, 1, false},
+		{"request timeout is still permanent 4xx", 408, 1, false},
+		{"rate limited", 429, 3, true},
+		{"server error", 500, 3, true},
+		{"bad gateway", 502, 3, true},
+		{"unavailable", 503, 3, true},
+		{"not modified", 304, 1, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var calls int
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				w.WriteHeader(tt.status)
+				io.WriteString(w, `{"type":"urn:noaa:nws:api:InvalidPoint","title":"Invalid point","status":404,"detail":"outside coverage","instance":"request:1","correlationId":"abc"}`)
+			}))
+			t.Cleanup(server.Close)
+			c := nwstest.NewClient(t, nws.WithBaseURL(server.URL))
+			_, err := c.Fetch(context.Background(), "/points/1,2", nil, "")
+			var requestErr *nws.RequestError
+			if !errors.As(err, &requestErr) {
+				t.Fatalf("error type = %T: %v", err, err)
+			}
+			if calls != tt.wantAttempts || requestErr.Attempts != tt.wantAttempts || requestErr.StatusCode != tt.status || requestErr.Retryable != tt.retryable {
+				t.Fatalf("calls = %d, error = %+v", calls, requestErr)
+			}
+			if tt.status != http.StatusNotModified && (requestErr.Problem.Type != "urn:noaa:nws:api:InvalidPoint" || requestErr.Problem.CorrelationID != "abc" || requestErr.Body == "") {
+				t.Fatalf("problem lost: %+v", requestErr)
+			}
+		})
+	}
+}
+
 type trackedBody struct {
 	io.Reader
 	closed *int
 }
 
 func (b trackedBody) Close() error { *b.closed++; return nil }
+
+func TestTransportRetriesAndBodyOwnership(t *testing.T) {
+	transportErr := errors.New("connection reset")
+	calls, closed := 0, 0
+	c := nwstest.NewClient(t, nws.WithHTTPClient(&http.Client{Transport: nwstest.Transport(func(r *http.Request) (*http.Response, error) {
+		calls++
+		if calls == 1 {
+			return nil, transportErr
+		}
+		status := http.StatusServiceUnavailable
+		body := "unavailable"
+		if calls == 3 {
+			status, body = http.StatusOK, `{"ok":true}`
+		}
+		return &http.Response{StatusCode: status, Header: make(http.Header), Body: trackedBody{Reader: strings.NewReader(body), closed: &closed}}, nil
+	})}))
+	var got struct{ OK bool }
+	if err := c.Get(context.Background(), "/test", nil, &got); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 3 || closed != 2 || !got.OK {
+		t.Fatalf("calls=%d closed=%d got=%+v", calls, closed, got)
+	}
+
+	c = nwstest.NewClient(t, nws.WithHTTPClient(&http.Client{Transport: nwstest.Transport(func(r *http.Request) (*http.Response, error) { return nil, transportErr })}))
+	_, err := c.Fetch(context.Background(), "/test", nil, "")
+	var terminal *nws.RequestError
+	if !errors.Is(err, transportErr) || !errors.As(err, &terminal) || !terminal.Retryable || terminal.Attempts != 3 {
+		t.Fatalf("error = %+v", err)
+	}
+}
 
 type failingReader struct{ err error }
 
@@ -185,7 +263,7 @@ func TestResponseFailures(t *testing.T) {
 		wantBodyLength int
 		retryable      bool
 	}{
-		{name: "incomplete success", status: 200, readErr: readErr, limit: 32, wantAttempts: 1, retryable: true},
+		{name: "incomplete success retries", status: 200, readErr: readErr, limit: 32, wantAttempts: 3, retryable: true},
 		{name: "incomplete forbidden response is terminal", status: 403, readErr: readErr, limit: 32, wantAttempts: 1},
 		{name: "oversize success", status: 200, body: "12345", limit: 4, wantAttempts: 1},
 		{name: "malformed JSON", status: 200, body: "{", limit: 32, wantAttempts: 1},
@@ -227,6 +305,52 @@ func TestRawRepresentation(t *testing.T) {
 	resp, err := c.Fetch(context.Background(), "/icons/land/day/skc", nil, "image/png")
 	if err != nil || string(resp.Body) != "PNG!" || resp.Header.Get("Content-Type") != "image/png" {
 		t.Fatalf("response=%+v error=%v", resp, err)
+	}
+}
+
+func TestRedirects(t *testing.T) {
+	tests := []struct {
+		name, location string
+		wantAttempts   int
+		wantErr        bool
+	}{
+		{"same origin", "/final", 2, false},
+		{"cross origin", "https://evil.example/final", 1, true},
+		{"malformed query", "/final?area=%ZZ&status=actual", 1, true},
+		{"redirect loop", "/start", 3, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var calls int
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				if r.URL.Path == "/final" {
+					io.WriteString(w, "{}")
+					return
+				}
+				w.Header().Set("Location", tt.location)
+				w.WriteHeader(301)
+			}))
+			t.Cleanup(server.Close)
+			// Redirect handling must leave the caller's HTTP client configuration intact.
+			hc := server.Client()
+			var callbackCalls int
+			hc.CheckRedirect = func(r *http.Request, via []*http.Request) error {
+				callbackCalls++
+				return errors.New("caller's redirect policy")
+			}
+			c := nwstest.NewClient(t, nws.WithBaseURL(server.URL), nws.WithHTTPClient(hc))
+			response, err := c.Fetch(context.Background(), "/start", nil, "")
+			if (err != nil) != tt.wantErr || (response == nil) != tt.wantErr || calls != tt.wantAttempts || callbackCalls != 0 || hc.CheckRedirect == nil {
+				t.Fatalf("calls=%d error=%v", calls, err)
+			}
+			if tt.wantErr {
+				var failure *nws.RequestError
+				if !errors.As(err, &failure) || failure.StatusCode != 301 || failure.Attempts != tt.wantAttempts || failure.Retryable {
+					t.Fatalf("error=%v; want terminal redirect error after %d attempts", err, tt.wantAttempts)
+				}
+			}
+		})
 	}
 }
 
@@ -315,89 +439,167 @@ func TestGetNegotiatesJSONFormats(t *testing.T) {
 	}
 }
 
-func TestHTTPRetryClassification(t *testing.T) {
-	tests := []struct {
-		name         string
-		status       int
-		wantAttempts int
-		retryable    bool
+func TestRedirectDrainIsBounded(t *testing.T) {
+	for _, tt := range []struct {
+		name          string
+		contentLength int64
 	}{
-		{"bad request", 400, 1, false},
-		{"forbidden", 403, 1, false},
-		{"not found", 404, 1, false},
-		{"request timeout is still permanent 4xx", 408, 1, false},
-		{"rate limited", 429, 1, true},
-		{"server error", 500, 1, true},
-		{"bad gateway", 502, 1, true},
-		{"unavailable", 503, 1, true},
-		{"not modified", 304, 1, false},
-	}
-	for _, tt := range tests {
+		{name: "known large body", contentLength: 8192},
+		{name: "unknown length", contentLength: -1},
+	} {
 		t.Run(tt.name, func(t *testing.T) {
-			var calls int
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				calls++
-				w.WriteHeader(tt.status)
-				io.WriteString(w, `{"type":"urn:noaa:nws:api:InvalidPoint","title":"Invalid point","status":404,"detail":"outside coverage","instance":"request:1","correlationId":"abc"}`)
-			}))
-			t.Cleanup(server.Close)
-			c := nwstest.NewClient(t, nws.WithBaseURL(server.URL))
-			_, err := c.Fetch(context.Background(), "/points/1,2", nil, "")
-			var requestErr *nws.RequestError
-			if !errors.As(err, &requestErr) {
-				t.Fatalf("error type = %T: %v", err, err)
+			body := &io.LimitedReader{R: strings.NewReader(strings.Repeat("x", 8192)), N: 8192}
+			closed := 0
+			client := nwstest.NewClient(t, nws.WithHTTPClient(&http.Client{Transport: nwstest.Transport(func(r *http.Request) (*http.Response, error) {
+				if r.URL.Path == "/start" {
+					return &http.Response{
+						StatusCode:    http.StatusMovedPermanently,
+						Header:        http.Header{"Location": {"/final"}},
+						Body:          trackedBody{Reader: body, closed: &closed},
+						ContentLength: tt.contentLength,
+						Request:       r,
+					}, nil
+				}
+				return nwstest.Response([]byte("{}")), nil
+			})}))
+			if _, err := client.Fetch(t.Context(), "/start", nil, ""); err != nil {
+				t.Fatal(err)
 			}
-			if calls != tt.wantAttempts || requestErr.Attempts != tt.wantAttempts || requestErr.StatusCode != tt.status || requestErr.Retryable != tt.retryable {
-				t.Fatalf("calls = %d, error = %+v", calls, requestErr)
-			}
-			if tt.status != http.StatusNotModified && (requestErr.Problem.Type != "urn:noaa:nws:api:InvalidPoint" || requestErr.Problem.CorrelationID != "abc" || requestErr.Body == "") {
-				t.Fatalf("problem lost: %+v", requestErr)
+			if read := 8192 - body.N; read > 2<<10 || closed != 1 {
+				t.Fatalf("redirect body read=%d, closed=%d; want at most 2 KiB and closed once", read, closed)
 			}
 		})
 	}
 }
 
-func TestRedirects(t *testing.T) {
-	tests := []struct {
-		name, location string
-		wantAttempts   int
-		wantErr        bool
-	}{
-		{"same origin", "/final", 1, true},
-		{"cross origin", "https://evil.example/final", 1, true},
-		{"malformed query", "/final?area=%ZZ&status=actual", 1, true},
-		{"redirect loop", "/start", 1, true},
+func TestRedirectReusesConnection(t *testing.T) {
+	var connections atomic.Int32
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/start" {
+			w.Header().Set("Location", "/final")
+			w.WriteHeader(http.StatusMovedPermanently)
+			io.WriteString(w, "moved")
+			return
+		}
+		io.WriteString(w, "{}")
+	}))
+	server.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			connections.Add(1)
+		}
 	}
-	for _, tt := range tests {
+	server.Start()
+	t.Cleanup(server.Close)
+
+	client := nwstest.NewClient(t, nws.WithBaseURL(server.URL), nws.WithHTTPClient(server.Client()))
+	if _, err := client.Fetch(t.Context(), "/start", nil, ""); err != nil {
+		t.Fatal(err)
+	}
+	if got := connections.Load(); got != 1 {
+		t.Fatalf("redirect opened %d connections, want one reused connection", got)
+	}
+}
+
+func TestRetryAfterIsAMinimumWait(t *testing.T) {
+	for _, value := range []string{"120", time.Now().Add(2 * time.Minute).UTC().Format(http.TimeFormat)} {
+		t.Run(value, func(t *testing.T) {
+			var calls atomic.Int32
+			c := nwstest.NewClient(t, nws.WithHTTPClient(&http.Client{Transport: nwstest.Transport(func(r *http.Request) (*http.Response, error) {
+				calls.Add(1)
+				return &http.Response{StatusCode: 503, Header: http.Header{"Retry-After": {value}}, Body: io.NopCloser(strings.NewReader("{}"))}, nil
+			})}))
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+			defer cancel()
+			_, err := c.Fetch(ctx, "/test", nil, "")
+			var terminal *nws.RequestError
+			if !errors.Is(err, context.DeadlineExceeded) || !errors.As(err, &terminal) || terminal.Attempts != 1 || calls.Load() != 1 {
+				t.Fatalf("Retry-After ignored: calls=%d error=%v", calls.Load(), err)
+			}
+		})
+	}
+}
+
+// retryWaitContext observes cancellation-channel selection after the fake HTTP
+// attempt returns. With no HTTP timeout or pacing delay, the next selection is
+// the retry wait, after its timer has been created and its Err check has passed.
+// This keeps cancellation tests out of the transport and pre-wait fast paths.
+type retryWaitContext struct {
+	context.Context
+	afterAttempt atomic.Bool
+	waiting      chan struct{}
+}
+
+func (c *retryWaitContext) Done() <-chan struct{} {
+	if c.afterAttempt.Load() {
+		select {
+		case c.waiting <- struct{}{}:
+		default:
+		}
+	}
+	return c.Context.Done()
+}
+
+func TestCancellationDuringRetryWait(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		status     int
+		retryAfter string
+	}{
+		{name: "exponential backoff"},
+		{name: "Retry-After", status: http.StatusTooManyRequests, retryAfter: "3600"},
+		{name: "redirect Retry-After", status: http.StatusMovedPermanently, retryAfter: "3600"},
+	} {
 		t.Run(tt.name, func(t *testing.T) {
-			var calls int
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				calls++
-				if r.URL.Path == "/final" {
-					io.WriteString(w, "{}")
-					return
+			parent, cancel := context.WithCancel(context.Background())
+			ctx := &retryWaitContext{Context: parent, waiting: make(chan struct{}, 1)}
+			var calls atomic.Int32
+			client := nwstest.NewClient(t,
+				nws.WithRetryPolicy(nws.RetryPolicy{MaxAttempts: 3, InitialDelay: time.Hour, MaxDelay: time.Hour}),
+				nws.WithHTTPClient(&http.Client{Transport: nwstest.Transport(func(r *http.Request) (*http.Response, error) {
+					calls.Add(1)
+					defer ctx.afterAttempt.Store(true)
+					if tt.status == 0 {
+						return nil, errors.New("connection reset")
+					}
+					response := nwstest.Response([]byte("{}"))
+					response.StatusCode = tt.status
+					response.Header.Set("Retry-After", tt.retryAfter)
+					response.Header.Set("Location", "/final")
+					response.Request = r
+					return response, nil
+				})}))
+			done := make(chan error, 1)
+			finished := make(chan struct{})
+			go func() {
+				defer close(finished)
+				_, err := client.Fetch(ctx, "/test", nil, "")
+				done <- err
+			}()
+			t.Cleanup(func() {
+				cancel()
+				select {
+				case <-finished:
+				case <-time.After(time.Second):
+					t.Error("request did not stop after cancellation")
 				}
-				w.Header().Set("Location", tt.location)
-				w.WriteHeader(301)
-			}))
-			t.Cleanup(server.Close)
-			// Redirect handling must leave the caller's HTTP client configuration intact.
-			hc := server.Client()
-			var callbackCalls int
-			hc.CheckRedirect = func(r *http.Request, via []*http.Request) error {
-				callbackCalls++
-				return errors.New("caller's redirect policy")
+			})
+			select {
+			case <-ctx.waiting:
+			case err := <-done:
+				t.Fatalf("request finished before entering retry wait: %v", err)
+			case <-time.After(time.Second):
+				t.Fatal("request did not enter retry wait")
 			}
-			c := nwstest.NewClient(t, nws.WithBaseURL(server.URL), nws.WithHTTPClient(hc))
-			response, err := c.Fetch(context.Background(), "/start", nil, "")
-			if (err != nil) != tt.wantErr || (response == nil) != tt.wantErr || calls != tt.wantAttempts || callbackCalls != 0 || hc.CheckRedirect == nil {
-				t.Fatalf("calls=%d error=%v", calls, err)
-			}
-			if tt.wantErr {
+			cancel()
+			select {
+			case err := <-done:
 				var failure *nws.RequestError
-				if !errors.As(err, &failure) || failure.StatusCode != 301 || failure.Attempts != tt.wantAttempts || failure.Retryable {
-					t.Fatalf("error=%v; want terminal redirect error after %d attempts", err, tt.wantAttempts)
+				if !errors.Is(err, context.Canceled) || !errors.As(err, &failure) ||
+					failure.Attempts != 1 || failure.Retryable || calls.Load() != 1 {
+					t.Fatalf("calls=%d error=%v; want cancellation after one attempt", calls.Load(), err)
 				}
+			case <-time.After(time.Second):
+				t.Fatal("cancellation did not interrupt retry wait")
 			}
 		})
 	}
