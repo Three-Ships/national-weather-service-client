@@ -16,13 +16,16 @@ import (
 )
 
 // Client is safe for concurrent requests when constructed with NewClient.
-// Reuse an instance to share connection pooling; do not copy it after use.
+// Reuse an instance to share connection pooling and pacing; do not copy it after use.
 type Client struct {
-	httpClient *http.Client
-	baseURL    *url.URL
-	userAgent  string
-	retry      RetryPolicy
-	maxBytes   int64
+	httpClient  *http.Client
+	baseURL     *url.URL
+	userAgent   string
+	retry       RetryPolicy
+	interval    time.Duration
+	maxBytes    int64
+	pacer       chan struct{}
+	nextAttempt time.Time
 }
 
 // RetryPolicy bounds total HTTP attempts, including the initial request.
@@ -59,6 +62,13 @@ func WithRetryPolicy(policy RetryPolicy) Option {
 	return func(c *Client) { c.retry = policy }
 }
 
+// WithRequestInterval sets the minimum spacing between HTTP attempt admissions,
+// including retries and redirects. Zero disables pacing; the default is 200ms.
+// It is not an in-flight limit or a quota shared between client instances.
+func WithRequestInterval(interval time.Duration) Option {
+	return func(c *Client) { c.interval = interval }
+}
+
 // WithMaxResponseBytes bounds buffered successful responses (default 32 MiB).
 // Larger responses fail without retrying. HTTP error bodies are capped at 64 KiB.
 func WithMaxResponseBytes(limit int64) Option {
@@ -69,14 +79,15 @@ func WithMaxResponseBytes(limit int64) Option {
 // identify the application and include contact details, for example
 // "weather-reader/1.0 (weather@example.com)". Empty values and control characters
 // are rejected. The default HTTP timeout is 30s per attempt; WithHTTPClient
-// replaces it. Set a context deadline to also bound retry waits.
+// replaces it. Set a context deadline to also bound pacing and retry waits.
 func NewClient(userAgent string, options ...Option) (*Client, error) {
 	base, _ := url.Parse("https://api.weather.gov")
 	c := &Client{
 		httpClient: &http.Client{Timeout: 30 * time.Second},
 		baseURL:    base, userAgent: userAgent,
 		retry:    RetryPolicy{MaxAttempts: 4, InitialDelay: time.Second, MaxDelay: 30 * time.Second},
-		maxBytes: 32 << 20,
+		interval: 200 * time.Millisecond, maxBytes: 32 << 20,
+		pacer: make(chan struct{}, 1),
 	}
 	for _, option := range options {
 		if option == nil {
@@ -97,11 +108,11 @@ func NewClient(userAgent string, options ...Option) (*Client, error) {
 	if c.retry.MaxAttempts < 1 || c.retry.InitialDelay <= 0 || c.retry.MaxDelay < c.retry.InitialDelay {
 		return nil, errors.New("nws: invalid retry policy")
 	}
-	if c.maxBytes <= 0 || c.maxBytes == int64(^uint64(0)>>1) {
-		return nil, errors.New("nws: invalid response limit")
+	if c.interval < 0 || c.maxBytes <= 0 || c.maxBytes == int64(^uint64(0)>>1) {
+		return nil, errors.New("nws: invalid request interval or response limit")
 	}
 	// Disable automatic redirects: every network attempt must pass through the
-	// same origin checks and bounded attempt budget.
+	// same origin checks, pacer, and bounded attempt budget.
 	hc := *c.httpClient
 	hc.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
 	c.httpClient = &hc
@@ -125,7 +136,7 @@ type Response struct {
 // dropping filters; parameter names and values are otherwise passed through to NWS.
 // An empty accept selects application/geo+json.
 //
-// Redirects and retries share one attempt budget. Retries cover transport
+// Redirects and retries share one paced attempt budget. Retries cover transport
 // failures, incomplete successful-response reads, 429, and 5xx. Other HTTP statuses
 // are terminal. Retry-After accepts delta-seconds and HTTP dates. On failure,
 // Fetch returns a nil response; request failures are reported as RequestError.
@@ -142,7 +153,7 @@ func (c *Client) Fetch(ctx context.Context, resource string, query url.Values, a
 	}
 	var last *RequestError
 	for attempt := 1; attempt <= c.retry.MaxAttempts; attempt++ {
-		if err := ctx.Err(); err != nil {
+		if err := c.pace(ctx); err != nil {
 			if last == nil {
 				last = &RequestError{URL: u.String()}
 			}
@@ -272,6 +283,22 @@ func (c *Client) resolve(resource string, query url.Values) (*url.URL, error) {
 	}
 	u.RawQuery = q.Encode()
 	return u, nil
+}
+
+func (c *Client) pace(ctx context.Context) error {
+	// The gate prevents queued callers from each running a timer. Only a
+	// successful wait advances nextAttempt, so cancellation consumes no slot.
+	select {
+	case c.pacer <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	defer func() { <-c.pacer }()
+	if err := wait(ctx, time.Until(c.nextAttempt)); err != nil {
+		return err
+	}
+	c.nextAttempt = time.Now().Add(c.interval)
+	return nil
 }
 
 func wait(ctx context.Context, delay time.Duration) error {

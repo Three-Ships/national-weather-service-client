@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -44,10 +45,10 @@ func TestNewClientValidation(t *testing.T) {
 		agent  string
 		option nws.Option
 	}{
-		{"empty user agent", "", nws.WithMaxResponseBytes(32 << 20)},
-		{"blank user agent", "  ", nws.WithMaxResponseBytes(32 << 20)},
-		{"header injection", "reader\r\nX-Bad: yes", nws.WithMaxResponseBytes(32 << 20)},
-		{"invalid control character", "reader\x00", nws.WithMaxResponseBytes(32 << 20)},
+		{"empty user agent", "", nws.WithRequestInterval(0)},
+		{"blank user agent", "  ", nws.WithRequestInterval(0)},
+		{"header injection", "reader\r\nX-Bad: yes", nws.WithRequestInterval(0)},
+		{"invalid control character", "reader\x00", nws.WithRequestInterval(0)},
 		{"nil option", "reader", nil},
 		{"nil HTTP client", "reader", nws.WithHTTPClient(nil)},
 		{"relative base", "reader", nws.WithBaseURL("/api")},
@@ -56,6 +57,7 @@ func TestNewClientValidation(t *testing.T) {
 		{"credentials", "reader", nws.WithBaseURL("https://secret@weather.gov")},
 		{"base query", "reader", nws.WithBaseURL("https://weather.gov?x=y")},
 		{"base fragment", "reader", nws.WithBaseURL("https://weather.gov#fragment")},
+		{"negative interval", "reader", nws.WithRequestInterval(-1)},
 		{"zero body limit", "reader", nws.WithMaxResponseBytes(0)},
 		{"zero attempts", "reader", nws.WithRetryPolicy(nws.RetryPolicy{})},
 		{"reversed delays", "reader", nws.WithRetryPolicy(nws.RetryPolicy{MaxAttempts: 1, InitialDelay: time.Second, MaxDelay: time.Millisecond})},
@@ -384,6 +386,64 @@ func TestCancellation(t *testing.T) {
 	})
 }
 
+func TestPacingConcurrentCallsRetriesAndRedirects(t *testing.T) {
+	var mu sync.Mutex
+	var starts []time.Time
+	c := nwstest.NewClient(t, nws.WithRequestInterval(20*time.Millisecond), nws.WithHTTPClient(&http.Client{Transport: nwstest.Transport(func(r *http.Request) (*http.Response, error) {
+		mu.Lock()
+		starts = append(starts, time.Now())
+		mu.Unlock()
+		status := 200
+		headers := make(http.Header)
+		if r.URL.Path == "/retry" {
+			status = 503
+		}
+		if r.URL.Path == "/redirect" {
+			status = 301
+			headers.Set("Location", "/final")
+		}
+		return &http.Response{StatusCode: status, Header: headers, Body: io.NopCloser(strings.NewReader("{}")), Request: r}, nil
+	})}))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var wg sync.WaitGroup
+	for _, path := range []string{"/one", "/two", "/retry", "/redirect"} {
+		wg.Add(1)
+		go func(path string) {
+			defer wg.Done()
+			_, err := c.Fetch(ctx, path, nil, "")
+			if path != "/retry" && err != nil {
+				t.Errorf("%s: %v", path, err)
+			}
+		}(path)
+	}
+	wg.Wait()
+	if len(starts) != 7 {
+		t.Fatalf("attempt count = %d, want 7", len(starts))
+	}
+	for i := 1; i < len(starts); i++ {
+		// Transport invocation can lag admission slightly under scheduler load.
+		if gap := starts[i].Sub(starts[i-1]); gap < 10*time.Millisecond {
+			t.Errorf("attempt gap = %s", gap)
+		}
+	}
+}
+
+func TestIndependentClientPacers(t *testing.T) {
+	hc := &http.Client{Transport: nwstest.Transport(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("{}"))}, nil
+	})}
+	first := nwstest.NewClient(t, nws.WithHTTPClient(hc), nws.WithRequestInterval(time.Hour))
+	second := nwstest.NewClient(t, nws.WithHTTPClient(hc), nws.WithRequestInterval(time.Hour))
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	for _, c := range []*nws.Client{first, second} {
+		if _, err := c.Fetch(ctx, "/test", nil, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestRawJSONPreservesUnknownFields(t *testing.T) {
 	c := nwstest.NewClient(t, nws.WithHTTPClient(&http.Client{Transport: nwstest.Transport(func(r *http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"properties":{"periods":[{"newField":42}]}}`))}, nil
@@ -600,6 +660,47 @@ func TestCancellationDuringRetryWait(t *testing.T) {
 				}
 			case <-time.After(time.Second):
 				t.Fatal("cancellation did not interrupt retry wait")
+			}
+		})
+	}
+}
+
+func TestCancellationDuringPacing(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		waiters int
+	}{
+		{name: "active timer", waiters: 1},
+		{name: "timer and queued callers", waiters: 10},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var calls atomic.Int32
+			client := nwstest.NewClient(t, nws.WithRequestInterval(time.Hour),
+				nws.WithHTTPClient(&http.Client{Transport: nwstest.Transport(func(r *http.Request) (*http.Response, error) {
+					calls.Add(1)
+					return nwstest.Response([]byte("{}")), nil
+				})}))
+			if _, err := client.Fetch(t.Context(), "/test", nil, ""); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+			defer cancel()
+			done := make(chan error, tt.waiters)
+			for i := 0; i < tt.waiters; i++ {
+				go func() { _, err := client.Fetch(ctx, "/test", nil, ""); done <- err }()
+			}
+			for i := 0; i < tt.waiters; i++ {
+				select {
+				case err := <-done:
+					if !errors.Is(err, context.DeadlineExceeded) {
+						t.Fatal(err)
+					}
+				case <-time.After(time.Second):
+					t.Fatal("pacer waiter failed to cancel")
+				}
+			}
+			if calls.Load() != 1 {
+				t.Fatalf("pacer admitted %d attempts", calls.Load())
 			}
 		})
 	}

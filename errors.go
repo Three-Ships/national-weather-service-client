@@ -19,7 +19,7 @@ type ProblemDetail struct {
 // RequestError reports a failure after the client has applied its retry policy.
 // Inspect it with errors.As; errors.Is can inspect the wrapped cause. Retryable
 // describes the cause, not whether attempts remain. Attempts counts HTTP attempts,
-// including redirects. StatusCode is zero when no HTTP
+// including redirects, and excludes pacer waits. StatusCode is zero when no HTTP
 // status is available. Body contains at most 64 KiB of an HTTP error response.
 type RequestError struct {
 	URL        string

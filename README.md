@@ -46,16 +46,27 @@ URL is rejected.
 - `WithBaseURL`: replace the default `https://api.weather.gov` origin.
 - `WithMaxResponseBytes`: replace the 32 MiB successful-response limit.
 - `WithRetryPolicy`: replace the default four attempts, 1s initial delay, and 30s maximum backoff.
+- `WithRequestInterval`: replace the default 200ms interval; zero disables pacing.
 
 Failures return `*nws.RequestError`; inspect them with `errors.As` and use
 `errors.Is` for cancellation. `Retryable` describes the cause, not whether attempts remain. Avoid adding an
 unbounded outer retry loop; each call already owns its attempt budget.
 
+### Concurrent workloads
+
+Reuse a client for connection pooling and pacing. The default 200ms interval
+admits about five HTTP attempts per second per client; retries and redirects
+consume those admissions too. Pacing does not cap in-flight requests or coordinate
+separate clients or processes. Bound worker concurrency in your application.
+
+Set a context deadline to bound the whole operation, including pacing and retry
+waits. Response limits apply per body, not to total application memory.
+
 ## Testing
 
 Use `nwstest.Transport`, `nwstest.Response`, or `nwstest.FixtureClient` to
 exercise HTTP behavior without contacting NWS. Test clients use three attempts
-with nanosecond backoff.
+with nanosecond backoff and disable pacing.
 
 ## Contributing
 
