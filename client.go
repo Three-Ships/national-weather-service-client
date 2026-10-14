@@ -16,12 +16,15 @@ import (
 )
 
 // Client is safe for concurrent requests when constructed with NewClient.
-// Reuse an instance to share connection pooling; do not copy it after use.
+// Reuse an instance to share connection pooling and pacing; do not copy it after use.
 type Client struct {
-	httpClient *http.Client
-	baseURL    *url.URL
-	userAgent  string
-	retry      RetryPolicy
+	httpClient  *http.Client
+	baseURL     *url.URL
+	userAgent   string
+	retry       RetryPolicy
+	interval    time.Duration
+	pacer       chan struct{}
+	nextAttempt time.Time
 }
 
 // RetryPolicy bounds total HTTP attempts, including the initial request.
@@ -59,11 +62,18 @@ func WithRetryPolicy(policy RetryPolicy) Option {
 	return func(c *Client) { c.retry = policy }
 }
 
+// WithRequestInterval sets the minimum spacing between HTTP attempt admissions,
+// including retries and redirects. Zero disables pacing; the default is 200ms.
+// It is not an in-flight limit or a quota shared between client instances.
+func WithRequestInterval(interval time.Duration) Option {
+	return func(c *Client) { c.interval = interval }
+}
+
 // NewClient validates request configuration before any requests. userAgent should
 // identify the application and include contact details, for example
 // "weather-reader/1.0 (weather@example.com)". Empty values and control characters
 // are rejected. The default HTTP timeout is 30s per attempt; WithHTTPClient
-// replaces it. Set a context deadline to also bound retry waits.
+// replaces it. Set a context deadline to also bound pacing and retry waits.
 func NewClient(userAgent string, options ...Option) (*Client, error) {
 	base, _ := url.Parse("https://api.weather.gov")
 	c := &Client{
@@ -71,6 +81,8 @@ func NewClient(userAgent string, options ...Option) (*Client, error) {
 		baseURL:    base,
 		userAgent:  userAgent,
 		retry:      RetryPolicy{MaxAttempts: 4, InitialDelay: time.Second, MaxDelay: 30 * time.Second},
+		interval:   200 * time.Millisecond,
+		pacer:      make(chan struct{}, 1),
 	}
 	for _, option := range options {
 		if option == nil {
@@ -91,6 +103,9 @@ func NewClient(userAgent string, options ...Option) (*Client, error) {
 	if c.retry.MaxAttempts < 1 || c.retry.InitialDelay <= 0 || c.retry.MaxDelay < c.retry.InitialDelay {
 		return nil, errors.New("nws: invalid retry policy")
 	}
+	if c.interval < 0 {
+		return nil, errors.New("nws: invalid request interval")
+	}
 	// Validate every redirect before net/http sends it, without mutating the
 	// caller's client. Each Do call has its own redirect limit.
 	hc := *c.httpClient
@@ -102,6 +117,10 @@ func NewClient(userAgent string, options ...Option) (*Client, error) {
 		}
 		if _, err := c.resolve(req.URL.String(), nil); err != nil {
 			failure.Err = fmt.Errorf("invalid redirect: %w", err)
+			return failure
+		}
+		if err := c.pace(req.Context()); err != nil {
+			failure.Err = err
 			return failure
 		}
 		return nil
@@ -147,6 +166,9 @@ func (c *Client) Fetch(ctx context.Context, resource string, query url.Values, a
 		return nil, &RequestError{URL: u.String(), Err: err}
 	}
 	for attempt := 1; ; attempt++ {
+		if err := c.pace(ctx); err != nil {
+			return nil, &RequestError{URL: u.String(), Attempts: attempt - 1, Err: err}
+		}
 		response, retryAfter, err := c.fetchOnce(ctx, u, accept)
 		if err == nil {
 			response.attempts = attempt
@@ -269,6 +291,23 @@ func (c *Client) resolve(resource string, query url.Values) (*url.URL, error) {
 	}
 	u.RawQuery = q.Encode()
 	return u, nil
+}
+
+// pace spaces attempt admissions across concurrent callers. Cancellation while
+// waiting leaves the admission schedule unchanged; in-flight work is not limited.
+func (c *Client) pace(ctx context.Context) error {
+	// The gate prevents queued callers from each running a timer.
+	select {
+	case c.pacer <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	defer func() { <-c.pacer }()
+	if err := wait(ctx, time.Until(c.nextAttempt)); err != nil {
+		return err
+	}
+	c.nextAttempt = time.Now().Add(c.interval)
+	return nil
 }
 
 func wait(ctx context.Context, delay time.Duration) error {
