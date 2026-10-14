@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	nws "github.com/Three-Ships/national-weather-service-client"
+	"github.com/Three-Ships/national-weather-service-client/endpoints/alerts"
 	"github.com/Three-Ships/national-weather-service-client/endpoints/gridpoints"
 	"github.com/Three-Ships/national-weather-service-client/endpoints/points"
 	"github.com/Three-Ships/national-weather-service-client/nwstest"
@@ -745,6 +746,41 @@ func TestResourceOperations(t *testing.T) {
 			name: "forecast", resource: "/gridpoints/LWX/97,71/forecast?units=si",
 			request: func(ctx context.Context, client *nws.Client) (bool, error) {
 				result, err := gridpoints.GetForecast(ctx, client, "/gridpoints/LWX/97,71/forecast", url.Values{"units": {"si"}})
+				return result == nil, err
+			},
+		},
+		{
+			name: "single alert", resource: "/alerts/urn:oid:example",
+			request: func(ctx context.Context, client *nws.Client) (bool, error) {
+				result, err := alerts.Get(ctx, client, "urn:oid:example")
+				return result == nil, err
+			},
+		},
+		{
+			name: "alert history", resource: "/alerts?cursor=next",
+			request: func(ctx context.Context, client *nws.Client) (bool, error) {
+				result, err := alerts.List(ctx, client, url.Values{"cursor": {"next"}})
+				return result == nil, err
+			},
+		},
+		{
+			name: "active alerts", resource: "/alerts/active?status=actual",
+			request: func(ctx context.Context, client *nws.Client) (bool, error) {
+				result, err := alerts.ListActive(ctx, client, url.Values{"status": {"actual"}})
+				return result == nil, err
+			},
+		},
+		{
+			name: "active alert counts", resource: "/alerts/active/count",
+			request: func(ctx context.Context, client *nws.Client) (bool, error) {
+				result, err := alerts.CountActive(ctx, client)
+				return result == nil, err
+			},
+		},
+		{
+			name: "alert event types", resource: "/alerts/types",
+			request: func(ctx context.Context, client *nws.Client) (bool, error) {
+				result, err := alerts.ListTypes(ctx, client)
 				return result == nil, err
 			},
 		},
