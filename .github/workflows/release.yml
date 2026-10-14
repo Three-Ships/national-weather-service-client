@@ -1,0 +1,64 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+env:
+  COMMIT_SHA: ${{ github.sha }}
+  VERSION: ${{ github.ref_name }}
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    env:
+      GOTOOLCHAIN: local
+    steps:
+      - name: Validate version
+        shell: bash
+        run: |
+          if [[ ! "$VERSION" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::version must be vMAJOR.MINOR.PATCH without leading zeros"
+            exit 1
+          fi
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify revision and module version
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD)" = "$(git rev-parse "$COMMIT_SHA^{commit}")"
+          MODULE=$(awk '$1 == "module" {print $2}' go.mod)
+          MAJOR=${VERSION#v}
+          MAJOR=${MAJOR%%.*}
+          if [[ "$MODULE" =~ /v[0-9]+$ ]]; then
+            if [[ "$MAJOR" == 0 || "$MAJOR" == 1 || "$MODULE" != */v"$MAJOR" ]]; then
+              echo "::error::version major does not match the go.mod module path"
+              exit 1
+            fi
+          elif [[ "$MAJOR" != 0 && "$MAJOR" != 1 ]]; then
+            echo "::error::major versions above v1 require a matching /vMAJOR module path"
+            exit 1
+          fi
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: .tool-versions
+      - name: Check
+        run: make check
+
+  release:
+    needs: checks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Create release
+        run: gh release create "$VERSION" --verify-tag --title "$VERSION" --generate-notes
