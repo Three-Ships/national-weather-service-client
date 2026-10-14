@@ -1,0 +1,22 @@
+{
+  "type": "FeatureCollection", "title": "Current watches, warnings, and advisories",
+  "updated": "2026-01-01T12:00:00Z", "pagination": {"next": "https://api.weather.gov/alerts?cursor=next"},
+  "features": [{
+    "id": "https://api.weather.gov/alerts/urn:oid:example", "type": "Feature", "geometry": null,
+    "properties": {
+      "id": "urn:oid:example", "areaDesc": "District of Columbia",
+      "geocode": {"UGC": ["DCZ001"], "SAME": ["011001"]},
+      "affectedZones": ["https://api.weather.gov/zones/forecast/DCZ001"],
+      "references": [{"@id": "https://api.weather.gov/alerts/urn:oid:prior", "identifier": "urn:oid:prior", "sender": "nws@example.com", "sent": "2026-01-01T10:00:00Z"}],
+      "sent": "2026-01-01T12:00:00Z", "effective": "2026-01-01T12:00:00Z",
+      "onset": null, "expires": "2026-01-02T00:00:00Z", "ends": null,
+      "status": "Actual", "messageType": "Alert", "category": "Met", "severity": "Moderate",
+      "certainty": "Likely", "urgency": "Expected", "event": "Winter Weather Advisory",
+      "sender": "nws@example.com", "senderName": "NWS Baltimore MD/Washington DC",
+      "headline": null, "description": "Snow expected.", "instruction": null, "note": null,
+      "response": "Execute", "scope": "Public", "code": "IPAWSv1.0", "language": "en-US", "web": "",
+      "parameters": {"NWSheadline": ["Snow expected"], "mixedSourceValues": [1, true, null]},
+      "eventCode": {"SAME": ["WSA"]}
+    }
+  }]
+}

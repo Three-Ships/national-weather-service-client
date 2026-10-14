@@ -1,7 +1,7 @@
 // Package nws provides an unofficial client for the National Weather Service API.
 //
 // Resource operations and source types live in endpoints/points,
-// and endpoints/gridpoints.
+// endpoints/gridpoints, and endpoints/alerts.
 // Pass the same Client to those operations to share HTTP policy and pacing.
 //
 // Response types reference the NWS OpenAPI schemas they model. Endpoint structs
