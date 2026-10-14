@@ -92,7 +92,7 @@ Stop when pagination is absent or its next URL is empty. Use an overall context
 deadline or an application page limit to bound the traversal.
 
 See the executable [alert pagination example](endpoints/alerts/example_test.go)
-for the complete loop.
+for the complete loop. Station and observation collections follow the same pattern.
 
 ### Working with source values
 
