@@ -9,6 +9,7 @@ import (
 	"github.com/Three-Ships/national-weather-service-client/endpoints/alerts"
 	"github.com/Three-Ships/national-weather-service-client/endpoints/gridpoints"
 	"github.com/Three-Ships/national-weather-service-client/endpoints/points"
+	"github.com/Three-Ships/national-weather-service-client/endpoints/stations"
 	"github.com/Three-Ships/national-weather-service-client/nwstest"
 	"io"
 	"mime"
@@ -767,6 +768,41 @@ func TestResourceOperations(t *testing.T) {
 			name: "active alerts", resource: "/alerts/active?status=actual",
 			request: func(ctx context.Context, client *nws.Client) (bool, error) {
 				result, err := alerts.ListActive(ctx, client, url.Values{"status": {"actual"}})
+				return result == nil, err
+			},
+		},
+		{
+			name: "stations", resource: "/stations?limit=5",
+			request: func(ctx context.Context, client *nws.Client) (bool, error) {
+				result, err := stations.List(ctx, client, "/stations", url.Values{"limit": {"5"}})
+				return result == nil, err
+			},
+		},
+		{
+			name: "station details", resource: "/stations/KDCA",
+			request: func(ctx context.Context, client *nws.Client) (bool, error) {
+				result, err := stations.Get(ctx, client, "KDCA")
+				return result == nil, err
+			},
+		},
+		{
+			name: "latest observation", resource: "/stations/KDCA/observations/latest?require_qc=true",
+			request: func(ctx context.Context, client *nws.Client) (bool, error) {
+				result, err := stations.GetLatestObservation(ctx, client, "KDCA", url.Values{"require_qc": {"true"}})
+				return result == nil, err
+			},
+		},
+		{
+			name: "observation history", resource: "/stations/KDCA/observations?limit=10",
+			request: func(ctx context.Context, client *nws.Client) (bool, error) {
+				result, err := stations.ListObservations(ctx, client, "KDCA", url.Values{"limit": {"10"}})
+				return result == nil, err
+			},
+		},
+		{
+			name: "timestamped observation", resource: "/stations/KDCA/observations/2026-01-01T12:00:00Z",
+			request: func(ctx context.Context, client *nws.Client) (bool, error) {
+				result, err := stations.GetObservation(ctx, client, "KDCA", "2026-01-01T12:00:00Z")
 				return result == nil, err
 			},
 		},
