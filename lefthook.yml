@@ -1,0 +1,17 @@
+pre-commit:
+  parallel: false
+  commands:
+    gofmt:
+      priority: 1
+      glob: "*.go"
+      run: gofmt -w {staged_files}
+      stage_fixed: true
+    go-vet:
+      priority: 2
+      glob: "*.go"
+      run: make vet
+
+pre-push:
+  commands:
+    check:
+      run: make check
