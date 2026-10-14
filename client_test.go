@@ -741,6 +741,13 @@ func TestResourceOperations(t *testing.T) {
 				return result == nil, err
 			},
 		},
+		{
+			name: "forecast", resource: "/gridpoints/LWX/97,71/forecast?units=si",
+			request: func(ctx context.Context, client *nws.Client) (bool, error) {
+				result, err := gridpoints.GetForecast(ctx, client, "/gridpoints/LWX/97,71/forecast", url.Values{"units": {"si"}})
+				return result == nil, err
+			},
+		},
 	} {
 		t.Run(operation.name, func(t *testing.T) {
 			t.Run("request policy", func(t *testing.T) {
