@@ -1,0 +1,5 @@
+mode = "tag"
+
+[tag]
+scheme = "semver"
+prefix = "v"
