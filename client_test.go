@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	nws "github.com/Three-Ships/national-weather-service-client"
+	"github.com/Three-Ships/national-weather-service-client/endpoints/points"
 	"github.com/Three-Ships/national-weather-service-client/nwstest"
 	"io"
 	"mime"
@@ -701,6 +702,78 @@ func TestCancellationDuringPacing(t *testing.T) {
 			}
 			if calls.Load() != 1 {
 				t.Fatalf("pacer admitted %d attempts", calls.Load())
+			}
+		})
+	}
+}
+
+func TestResourceOperations(t *testing.T) {
+	// Keep one successful-request client across operations to verify that the
+	// resource packages share its pacer, not just its request configuration.
+	var starts []time.Time
+	var resources []string
+	client := nwstest.NewClient(t, nws.WithRequestInterval(20*time.Millisecond),
+		nws.WithHTTPClient(&http.Client{Transport: nwstest.Transport(func(r *http.Request) (*http.Response, error) {
+			starts = append(starts, time.Now())
+			resources = append(resources, r.URL.RequestURI())
+			if r.Header.Get("User-Agent") != "test-reader/1.0 (test@example.com)" ||
+				!strings.Contains(r.Header.Get("Accept"), "application/geo+json") {
+				t.Errorf("resource package bypassed configured headers: %v", r.Header)
+			}
+			return nwstest.Response([]byte("{}")), nil
+		})}))
+	for _, operation := range []struct {
+		name, resource string
+		request        func(context.Context, *nws.Client) (bool, error)
+	}{
+		{
+			name: "point discovery", resource: "/points/38.8977,-77.0365",
+			request: func(ctx context.Context, client *nws.Client) (bool, error) {
+				result, err := points.Get(ctx, client, 38.8977, -77.0365)
+				return result == nil, err
+			},
+		},
+	} {
+		t.Run(operation.name, func(t *testing.T) {
+			t.Run("request policy", func(t *testing.T) {
+				before := len(starts)
+				isNil, err := operation.request(t.Context(), client)
+				if isNil || err != nil {
+					t.Fatalf("nil result=%t error=%v; want successful result", isNil, err)
+				}
+				if len(starts) != before+1 || resources[len(resources)-1] != operation.resource {
+					t.Fatalf("resource requests = %v, want one additional request to %s", resources, operation.resource)
+				}
+				if before > 0 {
+					// Transport invocation can lag admission slightly under scheduler load.
+					if gap := starts[before].Sub(starts[before-1]); gap < 10*time.Millisecond {
+						t.Errorf("resource packages did not share the pacer: gap = %s", gap)
+					}
+				}
+			})
+			for _, response := range []struct {
+				name   string
+				status int
+				body   string
+			}{
+				{name: "HTTP error", status: http.StatusNotFound, body: "{}"},
+				{name: "invalid JSON", status: http.StatusOK, body: "{"},
+			} {
+				t.Run(response.name, func(t *testing.T) {
+					attempts := 0
+					client := nwstest.NewClient(t, nws.WithHTTPClient(&http.Client{Transport: nwstest.Transport(func(r *http.Request) (*http.Response, error) {
+						attempts++
+						result := nwstest.Response([]byte(response.body))
+						result.StatusCode = response.status
+						return result, nil
+					})}))
+					isNil, err := operation.request(t.Context(), client)
+					var failure *nws.RequestError
+					if !isNil || !errors.As(err, &failure) || failure.StatusCode != response.status ||
+						failure.Retryable || failure.Attempts != 1 || attempts != 1 {
+						t.Fatalf("nil result=%t, attempts=%d, error=%v; want nil result and non-retryable HTTP %d RequestError", isNil, attempts, err, response.status)
+					}
+				})
 			}
 		})
 	}
