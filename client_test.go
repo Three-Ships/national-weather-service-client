@@ -5,12 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	nws "github.com/Three-Ships/national-weather-service-client"
-	"github.com/Three-Ships/national-weather-service-client/endpoints/alerts"
-	"github.com/Three-Ships/national-weather-service-client/endpoints/gridpoints"
-	"github.com/Three-Ships/national-weather-service-client/endpoints/points"
-	"github.com/Three-Ships/national-weather-service-client/endpoints/stations"
-	"github.com/Three-Ships/national-weather-service-client/nwstest"
 	"io"
 	"mime"
 	"net"
@@ -23,6 +17,14 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	nws "github.com/Three-Ships/national-weather-service-client"
+	"github.com/Three-Ships/national-weather-service-client/endpoints/alerts"
+	"github.com/Three-Ships/national-weather-service-client/endpoints/gridpoints"
+	"github.com/Three-Ships/national-weather-service-client/endpoints/points"
+	"github.com/Three-Ships/national-weather-service-client/endpoints/stations"
+	"github.com/Three-Ships/national-weather-service-client/endpoints/zones"
+	"github.com/Three-Ships/national-weather-service-client/nwstest"
 )
 
 func ExampleClient_Get() {
@@ -779,6 +781,13 @@ func TestResourceOperations(t *testing.T) {
 			},
 		},
 		{
+			name: "zone metadata", resource: "/zones/forecast/DCZ001",
+			request: func(ctx context.Context, client *nws.Client) (bool, error) {
+				result, err := zones.Get(ctx, client, "forecast", "DCZ001")
+				return result == nil, err
+			},
+		},
+		{
 			name: "station details", resource: "/stations/KDCA",
 			request: func(ctx context.Context, client *nws.Client) (bool, error) {
 				result, err := stations.Get(ctx, client, "KDCA")
@@ -803,6 +812,27 @@ func TestResourceOperations(t *testing.T) {
 			name: "timestamped observation", resource: "/stations/KDCA/observations/2026-01-01T12:00:00Z",
 			request: func(ctx context.Context, client *nws.Client) (bool, error) {
 				result, err := stations.GetObservation(ctx, client, "KDCA", "2026-01-01T12:00:00Z")
+				return result == nil, err
+			},
+		},
+		{
+			name: "zone listing", resource: "/zones?area=DC",
+			request: func(ctx context.Context, client *nws.Client) (bool, error) {
+				result, err := zones.List(ctx, client, url.Values{"area": {"DC"}})
+				return result == nil, err
+			},
+		},
+		{
+			name: "zone type listing", resource: "/zones/forecast?area=DC",
+			request: func(ctx context.Context, client *nws.Client) (bool, error) {
+				result, err := zones.ListByType(ctx, client, "forecast", url.Values{"area": {"DC"}})
+				return result == nil, err
+			},
+		},
+		{
+			name: "zone forecast", resource: "/zones/forecast/DCZ001/forecast",
+			request: func(ctx context.Context, client *nws.Client) (bool, error) {
+				result, err := zones.GetForecast(ctx, client, "forecast", "DCZ001")
 				return result == nil, err
 			},
 		},
