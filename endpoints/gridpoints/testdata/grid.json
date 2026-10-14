@@ -1,0 +1,26 @@
+{
+  "type": "Feature",
+  "geometry": {"type": "Polygon", "coordinates": [[[-77.04,38.89],[-77.02,38.89],[-77.02,38.91],[-77.04,38.89]]]},
+  "properties": {
+    "@id": "https://api.weather.gov/gridpoints/LWX/97,71", "@type": "wx:Gridpoint",
+    "updateTime": "2026-01-01T12:00:00+00:00",
+    "validTimes": "2026-01-01T12:00:00+00:00/P7D",
+    "elevation": {"unitCode": "wmoUnit:m", "value": 8},
+    "forecastOffice": "https://api.weather.gov/offices/LWX",
+    "gridId": "LWX", "gridX": 97, "gridY": 71,
+    "temperature": {"uom": "wmoUnit:degC", "values": [
+      {"validTime": "2026-01-01T12:00:00+00:00/PT2H", "value": 0},
+      {"validTime": "2026-01-01T14:00:00+00:00/2026-01-01T15:00:00+00:00", "value": null}
+    ]},
+    "quantitativePrecipitation": {"uom": "wmoUnit:mm", "values": [
+      {"validTime": "2026-01-01T12:00:00+00:00/PT6H", "value": 2.54}
+    ]},
+    "futureNumericLayer": {"uom": "wmoUnit:percent", "values": []},
+    "weather": {"values": [{"validTime": "2026-01-01T12:00:00+00:00/PT2H", "value": [
+      {"coverage": "chance", "weather": "snow", "intensity": null, "visibility": {"unitCode": "wmoUnit:m", "value": null}, "attributes": ["gusty_wind"]}
+    ]}]},
+    "hazards": {"values": [{"validTime": "2026-01-01T12:00:00+00:00/PT2H", "value": [
+      {"phenomenon": "WW", "significance": "Y", "event_number": null}
+    ]}]}
+  }
+}

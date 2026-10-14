@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	nws "github.com/Three-Ships/national-weather-service-client"
+	"github.com/Three-Ships/national-weather-service-client/endpoints/gridpoints"
 	"github.com/Three-Ships/national-weather-service-client/endpoints/points"
 	"github.com/Three-Ships/national-weather-service-client/nwstest"
 	"io"
@@ -730,6 +731,13 @@ func TestResourceOperations(t *testing.T) {
 			name: "point discovery", resource: "/points/38.8977,-77.0365",
 			request: func(ctx context.Context, client *nws.Client) (bool, error) {
 				result, err := points.Get(ctx, client, 38.8977, -77.0365)
+				return result == nil, err
+			},
+		},
+		{
+			name: "raw grid data", resource: "/gridpoints/LWX/97,71",
+			request: func(ctx context.Context, client *nws.Client) (bool, error) {
+				result, err := gridpoints.Get(ctx, client, "/gridpoints/LWX/97,71")
 				return result == nil, err
 			},
 		},
