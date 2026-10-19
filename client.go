@@ -172,6 +172,10 @@ func (c *Client) Get(ctx context.Context, resource string, query url.Values, dst
 	return nil
 }
 
+// resolve accepts API-relative paths and same-origin absolute URLs, rejecting
+// resources outside the configured path prefix. Leading slashes on relative paths
+// preserve that prefix. Query values replace matching resource parameters and
+// retain the rest; malformed query encoding is rejected.
 func (c *Client) resolve(resource string, query url.Values) (*url.URL, error) {
 	ref, err := url.Parse(resource)
 	if err != nil || resource == "" {
