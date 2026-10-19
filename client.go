@@ -56,8 +56,9 @@ func NewClient(userAgent string, options ...Option) (*Client, error) {
 	base, _ := url.Parse("https://api.weather.gov")
 	c := &Client{
 		httpClient: &http.Client{Timeout: 30 * time.Second},
-		baseURL:    base, userAgent: userAgent,
-		maxBytes: 32 << 20,
+		baseURL:    base,
+		userAgent:  userAgent,
+		maxBytes:   32 << 20,
 	}
 	for _, option := range options {
 		if option == nil {
