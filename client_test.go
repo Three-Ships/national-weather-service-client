@@ -1,11 +1,10 @@
-package nws_test
+package nws
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	nws "github.com/Three-Ships/national-weather-service-client"
 	"io"
 	"mime"
 	"net/http"
@@ -23,10 +22,10 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
-func newTestClient(t testing.TB, options ...nws.Option) *nws.Client {
+func newTestClient(t testing.TB, options ...Option) *Client {
 	t.Helper()
-	defaults := []nws.Option{nws.WithRetryPolicy(nws.RetryPolicy{MaxAttempts: 3, InitialDelay: time.Nanosecond, MaxDelay: time.Nanosecond})}
-	c, err := nws.NewClient("test-reader/1.0 (test@example.com)", append(defaults, options...)...)
+	defaults := []Option{WithRetryPolicy(RetryPolicy{MaxAttempts: 3, InitialDelay: time.Nanosecond, MaxDelay: time.Nanosecond})}
+	c, err := NewClient("test-reader/1.0 (test@example.com)", append(defaults, options...)...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,8 +37,8 @@ func testResponse(body []byte) *http.Response {
 }
 
 func ExampleClient_Get() {
-	client, err := nws.NewClient("example-reader/1.0 (weather@example.com)",
-		nws.WithHTTPClient(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+	client, err := NewClient("example-reader/1.0 (weather@example.com)",
+		WithHTTPClient(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 			return testResponse([]byte(`{"glossary":[{"term":"Dew Point","definition":"A temperature."}]}`)), nil
 		})}))
 	if err != nil {
@@ -57,34 +56,33 @@ func ExampleClient_Get() {
 
 func TestNewClientValidation(t *testing.T) {
 	tests := []struct {
-		name   string
-		agent  string
-		option nws.Option
+		name    string
+		agent   string
+		options []Option
+		wantErr bool
 	}{
-		{"empty user agent", "", nws.WithBaseURL("https://api.weather.gov")},
-		{"blank user agent", "  ", nws.WithBaseURL("https://api.weather.gov")},
-		{"header injection", "reader\r\nX-Bad: yes", nws.WithBaseURL("https://api.weather.gov")},
-		{"invalid control character", "reader\x00", nws.WithBaseURL("https://api.weather.gov")},
-		{"nil option", "reader", nil},
-		{"nil HTTP client", "reader", nws.WithHTTPClient(nil)},
-		{"relative base", "reader", nws.WithBaseURL("/api")},
-		{"unsupported scheme", "reader", nws.WithBaseURL("ftp://weather.gov")},
-		{"invalid URL", "reader", nws.WithBaseURL("http://%")},
-		{"credentials", "reader", nws.WithBaseURL("https://secret@weather.gov")},
-		{"base query", "reader", nws.WithBaseURL("https://weather.gov?x=y")},
-		{"base fragment", "reader", nws.WithBaseURL("https://weather.gov#fragment")},
-		{"zero attempts", "reader", nws.WithRetryPolicy(nws.RetryPolicy{})},
-		{"reversed delays", "reader", nws.WithRetryPolicy(nws.RetryPolicy{MaxAttempts: 1, InitialDelay: time.Second, MaxDelay: time.Millisecond})},
+		{"valid defaults", "reader (reader@example.com)", nil, false},
+		{"empty user agent", "", []Option{WithBaseURL("https://api.weather.gov")}, true},
+		{"blank user agent", "  ", []Option{WithBaseURL("https://api.weather.gov")}, true},
+		{"header injection", "reader\r\nX-Bad: yes", []Option{WithBaseURL("https://api.weather.gov")}, true},
+		{"invalid control character", "reader\x00", []Option{WithBaseURL("https://api.weather.gov")}, true},
+		{"nil option", "reader", []Option{nil}, true},
+		{"nil HTTP client", "reader", []Option{WithHTTPClient(nil)}, true},
+		{"relative base", "reader", []Option{WithBaseURL("/api")}, true},
+		{"unsupported scheme", "reader", []Option{WithBaseURL("ftp://weather.gov")}, true},
+		{"invalid URL", "reader", []Option{WithBaseURL("http://%")}, true},
+		{"credentials", "reader", []Option{WithBaseURL("https://secret@weather.gov")}, true},
+		{"base query", "reader", []Option{WithBaseURL("https://weather.gov?x=y")}, true},
+		{"base fragment", "reader", []Option{WithBaseURL("https://weather.gov#fragment")}, true},
+		{"zero attempts", "reader", []Option{WithRetryPolicy(RetryPolicy{})}, true},
+		{"reversed delays", "reader", []Option{WithRetryPolicy(RetryPolicy{MaxAttempts: 1, InitialDelay: time.Second, MaxDelay: time.Millisecond})}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if _, err := nws.NewClient(tt.agent, tt.option); err == nil {
-				t.Fatal("expected configuration error")
+			if _, err := NewClient(tt.agent, tt.options...); (err != nil) != tt.wantErr {
+				t.Fatalf("NewClient() error = %v, wantErr %t", err, tt.wantErr)
 			}
 		})
-	}
-	if _, err := nws.NewClient("reader (reader@example.com)"); err != nil {
-		t.Fatal(err)
 	}
 }
 
@@ -126,7 +124,7 @@ func TestGetRequests(t *testing.T) {
 				io.WriteString(w, `{"glossary":[{"term":"rain"}]}`)
 			}))
 			t.Cleanup(server.Close)
-			client := newTestClient(t, nws.WithBaseURL(server.URL+"/api"))
+			client := newTestClient(t, WithBaseURL(server.URL+"/api"))
 			before := tt.query.Encode()
 			var got struct{ Glossary []struct{ Term string } }
 			if err := client.Get(t.Context(), tt.resource, tt.query, &got); err != nil {
@@ -169,13 +167,13 @@ func TestFetchValidation(t *testing.T) {
 		{name: "Accept control character", resource: "/alerts", accept: "image/png\x00"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			client := newTestClient(t, nws.WithBaseURL("https://api.weather.gov/api"),
-				nws.WithHTTPClient(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			client := newTestClient(t, WithBaseURL("https://api.weather.gov/api"),
+				WithHTTPClient(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 					t.Error("invalid input reached HTTP")
 					return testResponse([]byte("{}")), nil
 				})}))
 			response, err := client.Fetch(t.Context(), tt.resource, tt.query, tt.accept)
-			var failure *nws.RequestError
+			var failure *RequestError
 			if response != nil || err == nil || errors.As(err, &failure) {
 				t.Fatalf("response=%+v error=%v; want input validation error before HTTP", response, err)
 			}
@@ -209,9 +207,9 @@ func TestHTTPRetryClassification(t *testing.T) {
 				io.WriteString(w, `{"type":"urn:noaa:nws:api:InvalidPoint","title":"Invalid point","status":404,"detail":"outside coverage","instance":"request:1","correlationId":"abc"}`)
 			}))
 			t.Cleanup(server.Close)
-			c := newTestClient(t, nws.WithBaseURL(server.URL))
+			c := newTestClient(t, WithBaseURL(server.URL))
 			_, err := c.Fetch(context.Background(), "/points/1,2", nil, "")
-			var requestErr *nws.RequestError
+			var requestErr *RequestError
 			if !errors.As(err, &requestErr) {
 				t.Fatalf("error type = %T: %v", err, err)
 			}
@@ -235,7 +233,7 @@ func (b trackedBody) Close() error { *b.closed++; return nil }
 func TestTransportRetriesAndBodyOwnership(t *testing.T) {
 	transportErr := errors.New("connection reset")
 	calls, closed := 0, 0
-	c := newTestClient(t, nws.WithHTTPClient(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+	c := newTestClient(t, WithHTTPClient(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		calls++
 		if calls == 1 {
 			return nil, transportErr
@@ -253,13 +251,6 @@ func TestTransportRetriesAndBodyOwnership(t *testing.T) {
 	}
 	if calls != 3 || closed != 2 || !got.OK {
 		t.Fatalf("calls=%d closed=%d got=%+v", calls, closed, got)
-	}
-
-	c = newTestClient(t, nws.WithHTTPClient(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) { return nil, transportErr })}))
-	_, err := c.Fetch(context.Background(), "/test", nil, "")
-	var terminal *nws.RequestError
-	if !errors.Is(err, transportErr) || !errors.As(err, &terminal) || !terminal.Retryable || terminal.Attempts != 3 {
-		t.Fatalf("error = %+v", err)
 	}
 }
 
@@ -286,7 +277,7 @@ func TestResponseFailures(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			calls, closed := 0, 0
-			client := newTestClient(t, nws.WithHTTPClient(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			client := newTestClient(t, WithHTTPClient(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 				calls++
 				var reader io.Reader = strings.NewReader(tt.body)
 				if tt.readErr != nil {
@@ -296,7 +287,7 @@ func TestResponseFailures(t *testing.T) {
 			})}))
 			var dst any
 			err := client.Get(t.Context(), "/test", nil, &dst)
-			var failure *nws.RequestError
+			var failure *RequestError
 			if !errors.As(err, &failure) || failure.StatusCode != tt.status || failure.Attempts != tt.wantAttempts ||
 				failure.Retryable != tt.retryable || calls != tt.wantAttempts || closed != tt.wantAttempts || len(failure.Body) != tt.wantBodyLength {
 				t.Fatalf("calls=%d closed=%d error=%+v", calls, closed, failure)
@@ -309,7 +300,7 @@ func TestResponseFailures(t *testing.T) {
 }
 
 func TestRawRepresentation(t *testing.T) {
-	c := newTestClient(t, nws.WithHTTPClient(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+	c := newTestClient(t, WithHTTPClient(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		if r.Header.Get("Accept") != "image/png" {
 			t.Errorf("Accept = %q", r.Header.Get("Accept"))
 		}
@@ -324,15 +315,20 @@ func TestRawRepresentation(t *testing.T) {
 func TestRedirects(t *testing.T) {
 	tests := []struct {
 		name, location string
-		wantAttempts   int
+		basePath       string
+		status         int
+		wantCalls      int
 		wantErr        bool
 	}{
-		{"same origin", "/final", 2, false},
-		{"cross origin", "https://evil.example/final", 1, true},
-		{"malformed query", "/final?area=%ZZ&status=actual", 1, true},
-		{"redirect loop", "/start", 4, true},
-		{"missing location", "", 1, true},
-		{"credentials", "http://user@evil.example/final", 1, true},
+		{"same origin", "/final", "", http.StatusMovedPermanently, 2, false},
+		{"cross origin", "https://evil.example/final", "", http.StatusMovedPermanently, 1, true},
+		{"malformed query", "/final?area=%ZZ&status=actual", "", http.StatusMovedPermanently, 1, true},
+		{"redirect loop", "/start", "", http.StatusMovedPermanently, 4, true},
+		{"missing location", "", "", http.StatusMovedPermanently, 1, true},
+		{"credentials", "http://user@evil.example/final", "", http.StatusMovedPermanently, 1, true},
+		{"outside base path", "/outside", "/api", http.StatusFound, 1, true},
+		{"encoded parent navigation", "/api/%2e%2e/outside", "/api", http.StatusFound, 1, true},
+		{"encoded separators and navigation", "/api/child%2F..%2F..%2Foutside", "/api", http.StatusFound, 1, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -344,7 +340,7 @@ func TestRedirects(t *testing.T) {
 					return
 				}
 				w.Header().Set("Location", tt.location)
-				w.WriteHeader(301)
+				w.WriteHeader(tt.status)
 			}))
 			t.Cleanup(server.Close)
 			// Redirect handling must leave the caller's HTTP client configuration intact.
@@ -354,14 +350,14 @@ func TestRedirects(t *testing.T) {
 				callbackCalls++
 				return errors.New("caller's redirect policy")
 			}
-			c := newTestClient(t, nws.WithBaseURL(server.URL), nws.WithHTTPClient(hc))
+			c := newTestClient(t, WithBaseURL(server.URL+tt.basePath), WithHTTPClient(hc))
 			response, err := c.Fetch(context.Background(), "/start", nil, "")
-			if (err != nil) != tt.wantErr || (response == nil) != tt.wantErr || calls != tt.wantAttempts || callbackCalls != 0 || hc.CheckRedirect == nil {
+			if (err != nil) != tt.wantErr || (response == nil) != tt.wantErr || calls != tt.wantCalls || callbackCalls != 0 || hc.CheckRedirect == nil {
 				t.Fatalf("calls=%d error=%v", calls, err)
 			}
 			if tt.wantErr {
-				var failure *nws.RequestError
-				if !errors.As(err, &failure) || failure.StatusCode != 301 || failure.Attempts != 1 || failure.Retryable {
+				var failure *RequestError
+				if !errors.As(err, &failure) || failure.StatusCode != tt.status || failure.Attempts != 1 || failure.Retryable {
 					t.Fatalf("error=%v; want terminal redirect error after one Do call", err)
 				}
 			}
@@ -391,8 +387,8 @@ func TestRedirectsHaveAnIndependentLimit(t *testing.T) {
 				io.WriteString(w, "{}")
 			}))
 			t.Cleanup(server.Close)
-			client := newTestClient(t, nws.WithBaseURL(server.URL+"/api"),
-				nws.WithRetryPolicy(nws.RetryPolicy{MaxAttempts: 2, InitialDelay: time.Nanosecond, MaxDelay: time.Nanosecond}))
+			client := newTestClient(t, WithBaseURL(server.URL+"/api"),
+				WithRetryPolicy(RetryPolicy{MaxAttempts: 2, InitialDelay: time.Nanosecond, MaxDelay: time.Nanosecond}))
 			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 			defer cancel()
 			response, err := client.Fetch(ctx, "/start", nil, "application/json")
@@ -403,24 +399,36 @@ func TestRedirectsHaveAnIndependentLimit(t *testing.T) {
 	}
 }
 
-func TestRedirectTransportFailurePreservesFinalURL(t *testing.T) {
-	transportErr := errors.New("connection reset")
-	calls := 0
-	client := newTestClient(t, nws.WithHTTPClient(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		calls++
-		if r.URL.Path == "/start" {
-			response := testResponse(nil)
-			response.StatusCode = http.StatusFound
-			response.Header.Set("Location", "/final")
-			return response, nil
-		}
-		return nil, transportErr
-	})}))
-	_, err := client.Fetch(t.Context(), "/start", nil, "")
-	var failure *nws.RequestError
-	if !errors.Is(err, transportErr) || !errors.As(err, &failure) ||
-		failure.URL != "https://api.weather.gov/final" || failure.Attempts != 3 || !failure.Retryable || calls != 6 {
-		t.Fatalf("calls=%d error=%v; want final URL and three failed Do calls", calls, err)
+func TestTransportFailures(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		redirect  bool
+		wantURL   string
+		wantCalls int
+	}{
+		{"direct request", false, "https://api.weather.gov/start", 3},
+		{"redirect preserves final URL", true, "https://api.weather.gov/final", 6},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			transportErr := errors.New("connection reset")
+			calls := 0
+			client := newTestClient(t, WithHTTPClient(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				calls++
+				if tt.redirect && r.URL.Path == "/start" {
+					response := testResponse(nil)
+					response.StatusCode = http.StatusFound
+					response.Header.Set("Location", "/final")
+					return response, nil
+				}
+				return nil, transportErr
+			})}))
+			response, err := client.Fetch(t.Context(), "/start", nil, "")
+			var failure *RequestError
+			if response != nil || !errors.Is(err, transportErr) || !errors.As(err, &failure) ||
+				failure.URL != tt.wantURL || failure.Attempts != 3 || !failure.Retryable || calls != tt.wantCalls {
+				t.Fatalf("calls=%d response=%+v error=%v; want URL %s and three failed Do calls", calls, response, err, tt.wantURL)
+			}
+		})
 	}
 }
 
@@ -436,41 +444,21 @@ func TestThreeRedirectsInOneAttempt(t *testing.T) {
 		io.WriteString(w, "{")
 	}))
 	t.Cleanup(server.Close)
-	client := newTestClient(t, nws.WithBaseURL(server.URL),
-		nws.WithRetryPolicy(nws.RetryPolicy{MaxAttempts: 1, InitialDelay: time.Nanosecond, MaxDelay: time.Nanosecond}))
+	client := newTestClient(t, WithBaseURL(server.URL),
+		WithRetryPolicy(RetryPolicy{MaxAttempts: 1, InitialDelay: time.Nanosecond, MaxDelay: time.Nanosecond}))
 	var dst any
 	err := client.Get(t.Context(), "/start", nil, &dst)
-	var failure *nws.RequestError
+	var failure *RequestError
 	if !errors.As(err, &failure) || failure.Attempts != 1 || failure.StatusCode != 200 ||
 		failure.Retryable || failure.URL != server.URL+"/hop/3" || calls != 4 {
 		t.Fatalf("calls=%d error=%v; want decode error at final URL after one Do", calls, err)
 	}
 }
 
-func TestRedirectCannotEscapeBasePath(t *testing.T) {
-	for _, location := range []string{"/outside", "/api/%2e%2e/outside", "/api/child%2F..%2F..%2Foutside"} {
-		t.Run(location, func(t *testing.T) {
-			var calls int
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				calls++
-				w.Header().Set("Location", location)
-				w.WriteHeader(http.StatusFound)
-			}))
-			t.Cleanup(server.Close)
-			client := newTestClient(t, nws.WithBaseURL(server.URL+"/api"))
-			_, err := client.Fetch(t.Context(), "/start", nil, "")
-			var failure *nws.RequestError
-			if !errors.As(err, &failure) || failure.Retryable || failure.Attempts != 1 || calls != 1 {
-				t.Fatalf("calls=%d error=%v", calls, err)
-			}
-		})
-	}
-}
-
 func TestCancellation(t *testing.T) {
 	t.Run("before request", func(t *testing.T) {
 		var calls int
-		c := newTestClient(t, nws.WithHTTPClient(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) { calls++; return nil, errors.New("unexpected request") })}))
+		c := newTestClient(t, WithHTTPClient(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) { calls++; return nil, errors.New("unexpected request") })}))
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		_, err := c.Fetch(ctx, "/test", nil, "")
@@ -480,7 +468,7 @@ func TestCancellation(t *testing.T) {
 	})
 	t.Run("during transport", func(t *testing.T) {
 		entered := make(chan struct{})
-		c := newTestClient(t, nws.WithHTTPClient(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		c := newTestClient(t, WithHTTPClient(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 			close(entered)
 			<-r.Context().Done()
 			return nil, r.Context().Err()
@@ -498,7 +486,7 @@ func TestCancellation(t *testing.T) {
 }
 
 func TestRawJSONPreservesUnknownFields(t *testing.T) {
-	c := newTestClient(t, nws.WithHTTPClient(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+	c := newTestClient(t, WithHTTPClient(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"properties":{"periods":[{"newField":42}]}}`))}, nil
 	})}))
 	var got struct {
@@ -515,7 +503,7 @@ func TestRawJSONPreservesUnknownFields(t *testing.T) {
 func TestGetNegotiatesJSONFormats(t *testing.T) {
 	for _, format := range []string{"application/geo+json", "application/json", "application/ld+json"} {
 		t.Run(format, func(t *testing.T) {
-			c := newTestClient(t, nws.WithHTTPClient(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			c := newTestClient(t, WithHTTPClient(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 				quality := make(map[string]float64)
 				for _, entry := range strings.Split(r.Header.Get("Accept"), ",") {
 					mediaType, params, err := mime.ParseMediaType(strings.TrimSpace(entry))
@@ -556,14 +544,14 @@ func TestRetryAfterIsAMinimumWait(t *testing.T) {
 	for _, value := range []string{"120", time.Now().Add(2 * time.Minute).UTC().Format(http.TimeFormat)} {
 		t.Run(value, func(t *testing.T) {
 			var calls atomic.Int32
-			c := newTestClient(t, nws.WithHTTPClient(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			c := newTestClient(t, WithHTTPClient(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 				calls.Add(1)
 				return &http.Response{StatusCode: 503, Header: http.Header{"Retry-After": {value}}, Body: io.NopCloser(strings.NewReader("{}"))}, nil
 			})}))
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 			defer cancel()
 			_, err := c.Fetch(ctx, "/test", nil, "")
-			var terminal *nws.RequestError
+			var terminal *RequestError
 			if !errors.Is(err, context.DeadlineExceeded) || !errors.As(err, &terminal) || terminal.Attempts != 1 || calls.Load() != 1 {
 				t.Fatalf("Retry-After ignored: calls=%d error=%v", calls.Load(), err)
 			}
@@ -605,8 +593,8 @@ func TestCancellationDuringRetryWait(t *testing.T) {
 			ctx := &retryWaitContext{Context: parent, waiting: make(chan struct{}, 1)}
 			var calls atomic.Int32
 			client := newTestClient(t,
-				nws.WithRetryPolicy(nws.RetryPolicy{MaxAttempts: 3, InitialDelay: time.Hour, MaxDelay: time.Hour}),
-				nws.WithHTTPClient(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				WithRetryPolicy(RetryPolicy{MaxAttempts: 3, InitialDelay: time.Hour, MaxDelay: time.Hour}),
+				WithHTTPClient(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 					calls.Add(1)
 					defer ctx.afterAttempt.Store(true)
 					if tt.status == 0 {
@@ -644,13 +632,77 @@ func TestCancellationDuringRetryWait(t *testing.T) {
 			cancel()
 			select {
 			case err := <-done:
-				var failure *nws.RequestError
+				var failure *RequestError
 				if !errors.Is(err, context.Canceled) || !errors.As(err, &failure) ||
 					failure.Attempts != 1 || failure.Retryable || calls.Load() != 1 {
 					t.Fatalf("calls=%d error=%v; want cancellation after one attempt", calls.Load(), err)
 				}
 			case <-time.After(time.Second):
 				t.Fatal("cancellation did not interrupt retry wait")
+			}
+		})
+	}
+}
+
+func TestParseRetryAfter(t *testing.T) {
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name, value string
+		want        time.Duration
+	}{
+		{"seconds", "120", 120 * time.Second},
+		{"zero", "0", 0},
+		{"whitespace", " 120 ", 120 * time.Second},
+		{"negative", "-1", 0},
+		{"date", now.Add(time.Minute).Format(http.TimeFormat), time.Minute},
+		{"past", now.Add(-time.Minute).Format(http.TimeFormat), 0},
+		{"invalid", "tomorrow", 0},
+		{"empty", "", 0},
+		{"overflowing duration", "9223372036854775807", time.Duration(1<<63 - 1)},
+		{"overflowing integer", "999999999999999999999999", time.Duration(1<<63 - 1)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := parseRetryAfter(tt.value, now); got != tt.want {
+				t.Errorf("got %s, want %s", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFullJitterBackoffBounds(t *testing.T) {
+	policy := RetryPolicy{InitialDelay: time.Second, MaxDelay: 5 * time.Second}
+	tests := []struct {
+		name   string
+		retry  int
+		policy RetryPolicy
+		bound  time.Duration
+	}{
+		{"initial delay", 1, policy, time.Second},
+		{"second retry", 2, policy, 2 * time.Second},
+		{"third retry", 3, policy, 4 * time.Second},
+		{"delay cap", 4, policy, 5 * time.Second},
+		{"high retry count", 100, policy, 5 * time.Second},
+		{"overflow", 100, RetryPolicy{InitialDelay: time.Duration(1 << 62), MaxDelay: time.Duration(1<<63 - 1)}, time.Duration(1<<63 - 1)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := &Client{retry: tt.policy}
+			var first time.Duration
+			var varied bool
+			for i := 0; i < 100; i++ {
+				got := c.backoff(tt.retry)
+				if got < 0 || got >= tt.bound {
+					t.Fatalf("retry %d: delay %s outside [0,%s)", tt.retry, got, tt.bound)
+				}
+				if i == 0 {
+					first = got
+				} else if got != first {
+					varied = true
+				}
+			}
+			if !varied {
+				t.Fatal("backoff has no jitter")
 			}
 		})
 	}
