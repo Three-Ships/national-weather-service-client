@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net/http"
 	"net/url"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -19,7 +21,16 @@ type Client struct {
 	httpClient *http.Client
 	baseURL    *url.URL
 	userAgent  string
-	maxBytes   int64
+	retry      RetryPolicy
+}
+
+// RetryPolicy bounds total HTTP attempts, including the initial request.
+// InitialDelay and MaxDelay bound exponential full-jitter backoff. Retry-After
+// is a minimum wait and may exceed MaxDelay; the caller's context still wins.
+type RetryPolicy struct {
+	MaxAttempts  int
+	InitialDelay time.Duration
+	MaxDelay     time.Duration
 }
 
 // Option configures a client. Repeated options replace earlier values.
@@ -34,31 +45,32 @@ func WithHTTPClient(client *http.Client) Option {
 }
 
 // WithBaseURL sets an absolute HTTP(S) API origin, optionally with a path prefix.
-// Discovered links must remain on this origin and inside that prefix.
+// Use an httptest server URL for local tests. Discovered links must remain on this
+// origin and inside that prefix.
 func WithBaseURL(baseURL string) Option {
 	return func(c *Client) {
 		c.baseURL, _ = url.Parse(baseURL)
 	}
 }
 
-// WithMaxResponseBytes bounds buffered successful responses (default 32 MiB).
-// Larger responses fail without retrying. HTTP error bodies are capped at 64 KiB.
-func WithMaxResponseBytes(limit int64) Option {
-	return func(c *Client) { c.maxBytes = limit }
+// WithRetryPolicy replaces the default four attempts, 1s initial delay, and 30s
+// maximum delay. All fields must be positive, with MaxDelay >= InitialDelay.
+func WithRetryPolicy(policy RetryPolicy) Option {
+	return func(c *Client) { c.retry = policy }
 }
 
 // NewClient validates request configuration before any requests. userAgent should
 // identify the application and include contact details, for example
 // "weather-reader/1.0 (weather@example.com)". Empty values and control characters
 // are rejected. The default HTTP timeout is 30s per attempt; WithHTTPClient
-// replaces it. Set a context deadline to bound the whole operation.
+// replaces it. Set a context deadline to also bound retry waits.
 func NewClient(userAgent string, options ...Option) (*Client, error) {
 	base, _ := url.Parse("https://api.weather.gov")
 	c := &Client{
 		httpClient: &http.Client{Timeout: 30 * time.Second},
 		baseURL:    base,
 		userAgent:  userAgent,
-		maxBytes:   32 << 20,
+		retry:      RetryPolicy{MaxAttempts: 4, InitialDelay: time.Second, MaxDelay: 30 * time.Second},
 	}
 	for _, option := range options {
 		if option == nil {
@@ -76,19 +88,30 @@ func NewClient(userAgent string, options ...Option) (*Client, error) {
 	if c.httpClient == nil {
 		return nil, errors.New("nws: nil HTTP client")
 	}
-	if c.maxBytes <= 0 || c.maxBytes == int64(^uint64(0)>>1) {
-		return nil, errors.New("nws: invalid response limit")
+	if c.retry.MaxAttempts < 1 || c.retry.InitialDelay <= 0 || c.retry.MaxDelay < c.retry.InitialDelay {
+		return nil, errors.New("nws: invalid retry policy")
 	}
-	// Disable automatic redirects so the supplied HTTP client's redirect policy
-	// cannot bypass the configured API origin or path prefix.
+	// Validate every redirect before net/http sends it, without mutating the
+	// caller's client. Each Do call has its own redirect limit.
 	hc := *c.httpClient
-	hc.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
+	hc.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		failure := &RequestError{URL: req.URL.String(), StatusCode: req.Response.StatusCode}
+		if len(via) > 3 {
+			failure.Err = errors.New("redirect limit exceeded")
+			return failure
+		}
+		if _, err := c.resolve(req.URL.String(), nil); err != nil {
+			failure.Err = fmt.Errorf("invalid redirect: %w", err)
+			return failure
+		}
+		return nil
+	}
 	c.httpClient = &hc
 	return c, nil
 }
 
 // Response contains the unmodified source body and final response headers.
-// Bodies are buffered within the configured limit; there is nothing to close.
+// Successful bodies are buffered in full; there is nothing to close.
 type Response struct {
 	URL        string
 	StatusCode int
@@ -104,8 +127,11 @@ type Response struct {
 // dropping filters; parameter names and values are otherwise passed through to NWS.
 // An empty accept selects application/geo+json.
 //
-// Each call makes at most one HTTP attempt. Redirects are not followed.
-// On failure, Fetch returns a nil response and a RequestError.
+// Each attempt follows at most three same-origin redirects within the base path.
+// Attempts count Do calls, not redirect hops. Retries cover transport
+// failures, incomplete successful-response reads, 429, and 5xx. Other HTTP statuses
+// are terminal. Retry-After accepts delta-seconds and HTTP dates. On failure,
+// Fetch returns a nil response; request failures are reported as RequestError.
 func (c *Client) Fetch(ctx context.Context, resource string, query url.Values, accept string) (*Response, error) {
 	u, err := c.resolve(resource, query)
 	if err != nil {
@@ -120,40 +146,77 @@ func (c *Client) Fetch(ctx context.Context, resource string, query url.Values, a
 	if err := ctx.Err(); err != nil {
 		return nil, &RequestError{URL: u.String(), Err: err}
 	}
+	for attempt := 1; ; attempt++ {
+		response, retryAfter, err := c.fetchOnce(ctx, u, accept)
+		if err == nil {
+			response.attempts = attempt
+			return response, nil
+		}
+		var failure *RequestError
+		if !errors.As(err, &failure) {
+			return nil, err
+		}
+		failure.Attempts = attempt
+		if err := ctx.Err(); err != nil {
+			failure.Err, failure.Retryable = err, false
+			return nil, failure
+		}
+		if !failure.Retryable || attempt >= c.retry.MaxAttempts {
+			return nil, failure
+		}
+		if err := wait(ctx, max(c.backoff(attempt), retryAfter)); err != nil {
+			failure.Err, failure.Retryable = err, false
+			return nil, failure
+		}
+	}
+}
+
+// fetchOnce owns one Do call and its final response body. Redirect response
+// bodies are managed by net/http; retry decisions and waits belong to Fetch.
+// On failure, the duration result is the parsed Retry-After delay, or zero.
+func (c *Client) fetchOnce(ctx context.Context, u *url.URL, accept string) (*Response, time.Duration, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	req.Header.Set("User-Agent", c.userAgent)
 	req.Header.Set("Accept", accept)
 	resp, err := c.httpClient.Do(req)
-	failure := &RequestError{URL: u.String(), Attempts: 1, Err: err, Retryable: true}
-	if err == nil {
-		failure.StatusCode = resp.StatusCode
-		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			body, readErr := io.ReadAll(io.LimitReader(resp.Body, c.maxBytes+1))
-			resp.Body.Close()
-			if int64(len(body)) > c.maxBytes {
-				failure.Err, failure.Retryable = errors.New("response exceeds configured size limit"), false
-				return nil, failure
-			}
-			if readErr == nil {
-				return &Response{URL: u.String(), StatusCode: resp.StatusCode, Header: resp.Header, Body: body, attempts: 1}, nil
-			}
+	if err != nil {
+		var failure *RequestError
+		if errors.As(err, &failure) {
+			// A rejected redirect is terminal. Do has already closed its body.
+			return nil, 0, failure
+		}
+		requestURL := u.String()
+		var urlErr *url.Error
+		if errors.As(err, &urlErr) {
+			requestURL = urlErr.URL
+		}
+		return nil, 0, &RequestError{URL: requestURL, Err: err, Retryable: true}
+	}
+	defer resp.Body.Close()
+	requestURL := u.String()
+	if resp.Request != nil {
+		requestURL = resp.Request.URL.String()
+	}
+	retryAfter := parseRetryAfter(resp.Header.Get("Retry-After"), time.Now())
+	failure := &RequestError{URL: requestURL, StatusCode: resp.StatusCode, Retryable: true}
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		body, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
 			failure.Err = readErr
 		} else {
-			body, readErr := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
-			resp.Body.Close()
-			failure.Body, failure.Err = string(body), readErr
-			// Problem details must not change classification based on HTTP status.
-			_ = json.Unmarshal(body, &failure.Problem)
-			failure.Retryable = resp.StatusCode == 429 || (resp.StatusCode >= 500 && resp.StatusCode < 600)
+			return &Response{URL: requestURL, StatusCode: resp.StatusCode, Header: resp.Header, Body: body}, 0, nil
 		}
+	} else {
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+		failure.Body, failure.Err = string(body), readErr
+		// Optional problem details must not change classification by HTTP status.
+		_ = json.Unmarshal(body, &failure.Problem)
+		failure.Retryable = resp.StatusCode == 429 || (resp.StatusCode >= 500 && resp.StatusCode < 600)
 	}
-	if ctx.Err() != nil {
-		failure.Err, failure.Retryable = ctx.Err(), false
-	}
-	return nil, failure
+	return nil, retryAfter, failure
 }
 
 // Get fetches JSON using Fetch's request policy and decodes it into dst, which
@@ -206,6 +269,54 @@ func (c *Client) resolve(resource string, query url.Values) (*url.URL, error) {
 	}
 	u.RawQuery = q.Encode()
 	return u, nil
+}
+
+func wait(ctx context.Context, delay time.Duration) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if delay <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+// backoff samples a delay uniformly below the capped exponential ceiling.
+// retry is one-based: the first retry uses InitialDelay as its ceiling.
+func (c *Client) backoff(retry int) time.Duration {
+	delay := c.retry.InitialDelay
+	for i := 1; i < retry && delay < c.retry.MaxDelay; i++ {
+		if delay > c.retry.MaxDelay/2 {
+			delay = c.retry.MaxDelay
+			break
+		}
+		delay *= 2
+	}
+	return time.Duration(rand.Int64N(int64(delay)))
+}
+
+// parseRetryAfter accepts delta-seconds or an HTTP date relative to now.
+// Invalid values and past dates yield zero; overflow saturates at the maximum
+// time.Duration.
+func parseRetryAfter(value string, now time.Time) time.Duration {
+	value = strings.TrimSpace(value)
+	if seconds, err := strconv.ParseUint(value, 10, 64); err == nil || errors.Is(err, strconv.ErrRange) {
+		if seconds > uint64((time.Duration(1<<63-1))/time.Second) {
+			return time.Duration(1<<63 - 1)
+		}
+		return time.Duration(seconds) * time.Second
+	}
+	if date, err := http.ParseTime(value); err == nil {
+		return max(0, date.Sub(now))
+	}
+	return 0
 }
 
 func validHeaderValue(value string) bool {
