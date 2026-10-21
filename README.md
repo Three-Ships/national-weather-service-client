@@ -46,10 +46,21 @@ URL is rejected.
 - `WithHTTPClient`: replace the default HTTP client, whose timeout is 30 seconds.
 - `WithBaseURL`: replace the default `https://api.weather.gov` origin.
 - `WithRetryPolicy`: replace the default four attempts, 1s initial delay, and 30s maximum backoff.
+- `WithRequestInterval`: replace the default 200ms interval; zero disables pacing.
 
 Failures return `*nws.RequestError`; inspect them with `errors.As` and use
 `errors.Is` for cancellation. `Retryable` describes the cause, not whether attempts remain. Avoid adding an
 unbounded outer retry loop; each call already owns its attempt budget.
+
+### Concurrent workloads
+
+Reuse a client for connection pooling and pacing. The default 200ms interval
+admits about five HTTP requests per second per client; retries and redirects
+consume those admissions too. Pacing does not cap in-flight requests or coordinate
+separate clients or processes. Bound worker concurrency in your application.
+
+Set a context deadline to bound the whole operation, including pacing and retry
+waits. Successful response bodies are buffered in full without a size limit.
 
 ## Testing
 
