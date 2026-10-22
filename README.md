@@ -76,7 +76,7 @@ Pass options to `NewClient` to override the defaults:
 Set a context deadline to bound the whole operation, including pacing and retry
 waits. Pacing does not coordinate separate clients or processes.
 
-### Query parameters
+### Query parameters and pagination
 
 Pass query parameters as unescaped strings in `url.Values`; the client encodes
 them. NWS multi-value filters generally use comma-separated values, for example
@@ -84,6 +84,15 @@ them. NWS multi-value filters generally use comma-separated values, for example
 parameter names and values through to NWS, including parameters added after this
 library was released. Malformed encoding in a resource URL, such as `area=%ZZ`,
 returns an error rather than silently dropping a filter.
+
+List operations return one page. When `Pagination.Next` is present, pass that URL
+to `Client.Get` with a nil query and a fresh collection as the destination. Do not
+reapply initial filters: the continuation URL already contains its query.
+Stop when pagination is absent or its next URL is empty. Use an overall context
+deadline or an application page limit to bound the traversal.
+
+See the executable [alert pagination example](endpoints/alerts/example_test.go)
+for the complete loop.
 
 ### Working with source values
 
