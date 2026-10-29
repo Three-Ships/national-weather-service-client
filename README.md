@@ -182,8 +182,7 @@ service also requires wiring it into `NewClient`.
 Bug reports and pull requests are welcome on GitHub at [https://github.com/Three-Ships/national-weather-service-client](https://github.com/Three-Ships/national-weather-service-client).
 
 Use the Go version in `.tool-versions` and run `make check` before submitting
-changes. See [CONTRIBUTING.md](CONTRIBUTING.md) for the endpoint extension pattern.
-`make fmt` formats Go files, `make cover` writes a coverage profile, and
+changes. `make fmt` formats Go files, `make cover` writes a coverage profile, and
 `lefthook install` enables the pre-commit checks. Keep tests beside their source
 in matching `_test.go` files, with named tables for related cases.
 
