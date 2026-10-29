@@ -158,6 +158,25 @@ Use `net/http/httptest` with `WithBaseURL` to exercise HTTP behavior without
 contacting NWS. Inject an `http.RoundTripper` through `WithHTTPClient` when a
 test needs transport or response-stream failures.
 
+## Code organization
+
+The public client, endpoint services, and response types share one `nws` package.
+Files separate their responsibilities without requiring separate package imports:
+
+| Responsibility | Files |
+| --- | --- |
+| Client setup, service wiring, HTTP, retries, pacing, and decoding | `client.go` |
+| Endpoint methods and resource-specific types | `points.go`, `gridpoints.go`, `alerts.go`, `stations.go`, `zones.go` |
+| Related resource types and subresources | Resource-prefixed files such as `points_astronomy.go`, `gridpoints_forecast.go`, `stations_observations.go`, and `zones_forecast.go` |
+| Shared GeoJSON envelopes, measurements, and request errors | `geojson.go`, `quantitative_value.go`, `errors.go` |
+| Internal resource-identifier validation | `internal/endpoint/endpoint.go` |
+| Tests, executable examples, and response fixtures | Matching `*_test.go` files and `testdata/<resource>/` |
+
+Endpoint services validate inputs, build routes, and decode into resource types
+through the shared client. HTTP policy stays in `client.go`. Adding an operation
+to an existing service only requires its resource files and tests; adding a new
+service also requires wiring it into `NewClient`.
+
 ## Contributing
 
 Bug reports and pull requests are welcome on GitHub at [https://github.com/Three-Ships/national-weather-service-client](https://github.com/Three-Ships/national-weather-service-client).

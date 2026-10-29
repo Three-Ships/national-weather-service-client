@@ -3,13 +3,8 @@
 The public API lives in package `nws`. Resource services group operations by NWS
 resource; they share the `Client` that `NewClient` binds to them.
 
-| Concern | Location |
-| --- | --- |
-| HTTP configuration, retries, redirects, pacing, and JSON decoding | `client.go` |
-| Resource operations and their source types | `points.go`, `alerts.go`, `stations.go`, `zones.go`, `gridpoints.go` |
-| Related subresources | Resource-prefixed files such as `stations_observations.go` and `zones_forecast.go` |
-| GeoJSON envelopes and shared measurements | `geojson.go`, `quantitative_value.go` |
-| Identifier validation | `internal/endpoint/endpoint.go` |
+See the README's [code organization](README.md#code-organization) for the file map
+and the boundary between endpoint operations and shared HTTP policy.
 
 ## Add an operation to an existing service
 
