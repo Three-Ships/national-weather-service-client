@@ -31,16 +31,17 @@ if err != nil {
 ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 defer cancel()
 
-point, err := client.Points.Get(ctx, 38.8977, -77.0365)
+point, response, err := client.Points.Get(ctx, 38.8977, -77.0365)
 if err != nil {
     return err
 }
+fmt.Println(response.StatusCode, response.Header.Get("Cache-Control"))
 if point.Properties.Forecast == "" {
     return errors.New("point has no forecast URL")
 }
 
 // Follow the NWS link because grid assignments can change.
-forecast, err := client.Gridpoints.GetForecast(ctx, point.Properties.Forecast, nil)
+forecast, _, err := client.Gridpoints.GetForecast(ctx, point.Properties.Forecast, nil)
 if err != nil {
     return err
 }
@@ -105,7 +106,7 @@ reapply initial filters: the continuation URL already contains its query.
 Stop when pagination is absent or its next URL is empty. Use an overall context
 deadline or an application page limit to bound the traversal.
 
-See the executable [alert pagination example](alerts_example_test.go)
+See the executable [alert pagination example](alerts_test.go)
 for the complete loop. Station and observation collections follow the same pattern.
 
 ### Working with source values
@@ -116,7 +117,7 @@ timestamps and convert units in your application when needed.
 
 Forecast temperature and wind fields use `json.RawMessage` because NWS can return
 scalar values or quantitative-value objects depending on feature flags. The
-[forecast decoding example](gridpoints_example_test.go) handles both
+[forecast decoding example](gridpoints_forecast_test.go) handles both
 formats and distinguishes missing data from zero without converting units.
 If your application requests a fixed format, use `Client.Get` with your own
 response type. Feature-flag headers can be added by a caller-owned transport.

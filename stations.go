@@ -42,23 +42,25 @@ type StationCollection struct {
 }
 
 // Get fetches station metadata by its NWS identifier.
-func (s *StationsService) Get(ctx context.Context, id string) (*Feature[Station], error) {
+func (s *StationsService) Get(ctx context.Context, id string) (*Feature[Station], *Response, error) {
 	if err := validateResourceID(id); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var result Feature[Station]
-	if err := s.client.Get(ctx, "stations/"+url.PathEscape(id), nil, &result); err != nil {
-		return nil, err
+	response, err := s.client.Get(ctx, "stations/"+url.PathEscape(id), nil, &result)
+	if err != nil {
+		return nil, response, err
 	}
-	return &result, nil
+	return &result, response, nil
 }
 
 // List fetches one station collection page. Resource may be "stations" or a
 // discovered observationStations link; query accepts the endpoint's filters.
-func (s *StationsService) List(ctx context.Context, resource string, query url.Values) (*StationCollection, error) {
+func (s *StationsService) List(ctx context.Context, resource string, query url.Values) (*StationCollection, *Response, error) {
 	var result StationCollection
-	if err := s.client.Get(ctx, resource, query, &result); err != nil {
-		return nil, err
+	response, err := s.client.Get(ctx, resource, query, &result)
+	if err != nil {
+		return nil, response, err
 	}
-	return &result, nil
+	return &result, response, nil
 }

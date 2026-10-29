@@ -29,7 +29,7 @@ func fixtureClient(t *testing.T, fixture, path string) *nws.Client {
 
 func TestGridSourceLayers(t *testing.T) {
 	c := fixtureClient(t, "grid", "/gridpoints/LWX/97,71")
-	got, err := c.Gridpoints.Get(context.Background(), "/gridpoints/LWX/97,71")
+	got, _, err := c.Gridpoints.Get(context.Background(), "/gridpoints/LWX/97,71")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -31,16 +31,17 @@ type ZoneForecastPeriod struct {
 
 // GetForecast retrieves a zone's current forecast without converting its periods
 // into grid forecast periods.
-func (s *ZonesService) GetForecast(ctx context.Context, zoneType, id string) (*Feature[ZoneForecast], error) {
+func (s *ZonesService) GetForecast(ctx context.Context, zoneType, id string) (*Feature[ZoneForecast], *Response, error) {
 	if err := validateResourceID(zoneType); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := validateResourceID(id); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var result Feature[ZoneForecast]
-	if err := s.client.Get(ctx, "zones/"+url.PathEscape(zoneType)+"/"+url.PathEscape(id)+"/forecast", nil, &result); err != nil {
-		return nil, err
+	response, err := s.client.Get(ctx, "zones/"+url.PathEscape(zoneType)+"/"+url.PathEscape(id)+"/forecast", nil, &result)
+	if err != nil {
+		return nil, response, err
 	}
-	return &result, nil
+	return &result, response, nil
 }

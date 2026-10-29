@@ -3,12 +3,14 @@ package nws_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	nws "github.com/Three-Ships/national-weather-service-client"
 )
@@ -40,9 +42,9 @@ func TestAlertsKeepSourceFields(t *testing.T) {
 			var got *nws.AlertCollection
 			var err error
 			if active {
-				got, err = c.Alerts.ListActive(context.Background(), url.Values{"status": {"actual"}})
+				got, _, err = c.Alerts.ListActive(context.Background(), url.Values{"status": {"actual"}})
 			} else {
-				got, err = c.Alerts.List(context.Background(), nil)
+				got, _, err = c.Alerts.List(context.Background(), nil)
 			}
 			if err != nil {
 				t.Fatal(err)
@@ -93,7 +95,7 @@ func TestAlertsGet(t *testing.T) {
 				}
 				io.WriteString(w, `{"type":"Feature","properties":{"id":"id/with?query"}}`)
 			})
-			got, err := client.Alerts.Get(t.Context(), tt.id)
+			got, _, err := client.Alerts.Get(t.Context(), tt.id)
 			if (err != nil) != tt.wantErr || (got == nil) != tt.wantErr {
 				t.Fatalf("result=%+v error=%v; want error=%t", got, err, tt.wantErr)
 			}
@@ -116,7 +118,7 @@ func TestActiveCounts(t *testing.T) {
 		w.Header().Set("Content-Type", "application/ld+json")
 		io.WriteString(w, `{"total":3,"land":2,"marine":1,"regions":{"AL":1},"areas":{"DC":2},"zones":{"DCZ001":2}}`)
 	})
-	got, err := c.Alerts.CountActive(t.Context())
+	got, _, err := c.Alerts.CountActive(t.Context())
 	if err != nil || got == nil || got.Total != 3 || got.Land != 2 || got.Marine != 1 ||
 		got.Regions["AL"] != 1 || got.Areas["DC"] != 2 || got.Zones["DCZ001"] != 2 {
 		t.Fatalf("counts=%+v error=%v", got, err)
@@ -130,8 +132,53 @@ func TestRecognizedEventTypes(t *testing.T) {
 		}
 		io.WriteString(w, `{"eventTypes":["Winter Weather Advisory","Future Event"]}`)
 	})
-	got, err := c.Alerts.ListTypes(t.Context())
+	got, _, err := c.Alerts.ListTypes(t.Context())
 	if err != nil || got == nil || len(got.Types) != 2 || got.Types[1] != "Future Event" {
 		t.Fatalf("types=%+v error=%v", got, err)
 	}
+}
+
+func ExampleAlertsService_List() {
+	// A local server supplies two pages so the example does not contact NWS.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.RequestURI() {
+		case "/alerts?area=DC&status=actual":
+			io.WriteString(w, `{"type":"FeatureCollection","features":[{"type":"Feature","properties":{"event":"Winter Weather Advisory"}}],"pagination":{"next":"/alerts?area=DC&cursor=next&status=actual"}}`)
+		case "/alerts?area=DC&cursor=next&status=actual":
+			io.WriteString(w, `{"type":"FeatureCollection","features":[{"type":"Feature","properties":{"event":"Wind Advisory"}}]}`)
+		default:
+			http.Error(w, "unexpected request: "+r.URL.String(), http.StatusBadRequest)
+		}
+	}))
+	defer server.Close()
+	client, err := nws.NewClient("example-reader/1.0 (weather@example.com)",
+		nws.WithRequestInterval(0), nws.WithBaseURL(server.URL))
+	if err != nil {
+		panic(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	page, _, err := client.Alerts.List(ctx, url.Values{"area": {"DC"}, "status": {"actual"}})
+	if err != nil {
+		panic(err)
+	}
+	for {
+		for _, feature := range page.Features {
+			fmt.Println(feature.Properties.Event)
+		}
+		if page.Pagination == nil || page.Pagination.Next == "" {
+			break
+		}
+		// Next contains the continuation query; do not reapply initial filters.
+		// Decode into a fresh collection so omitted metadata cannot remain stale.
+		var next nws.AlertCollection
+		if _, err := client.Get(ctx, page.Pagination.Next, nil, &next); err != nil {
+			panic(err)
+		}
+		page = &next
+	}
+	// Output:
+	// Winter Weather Advisory
+	// Wind Advisory
 }

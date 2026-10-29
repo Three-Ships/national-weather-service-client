@@ -257,17 +257,21 @@ func (c *Client) fetchOnce(ctx context.Context, u *url.URL, accept string) (*Res
 // Get fetches JSON using Fetch's request policy and decodes it into dst, which
 // must be a non-nil pointer. GeoJSON and JSON are preferred over JSON-LD so
 // resource packages receive feature envelopes when the endpoint offers them.
-// Use json.RawMessage or a caller-defined struct for unmodeled fields. Decoding errors, including invalid
-// destination types, return a non-retryable RequestError after the fetch.
-func (c *Client) Get(ctx context.Context, resource string, query url.Values, dst any) error {
+// Use json.RawMessage or a caller-defined struct for unmodeled fields.
+//
+// Get returns the buffered Response after a successful fetch, including when
+// decoding fails. Fetch failures return a nil response. Decoding errors, including
+// invalid destination types, return a non-retryable RequestError; dst may be
+// partially populated and must not be used after a decoding error.
+func (c *Client) Get(ctx context.Context, resource string, query url.Values, dst any) (*Response, error) {
 	resp, err := c.Fetch(ctx, resource, query, "application/geo+json, application/json, application/ld+json;q=0.9")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if err := json.Unmarshal(resp.Body, dst); err != nil {
-		return &RequestError{URL: resp.URL, Attempts: resp.attempts, StatusCode: resp.StatusCode, Err: fmt.Errorf("decode JSON: %w", err)}
+		return resp, &RequestError{URL: resp.URL, Attempts: resp.attempts, StatusCode: resp.StatusCode, Err: fmt.Errorf("decode JSON: %w", err)}
 	}
-	return nil
+	return resp, nil
 }
 
 // resolve accepts API-relative paths and same-origin absolute URLs, rejecting

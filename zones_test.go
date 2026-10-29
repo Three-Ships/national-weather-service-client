@@ -29,7 +29,7 @@ func TestZoneMetadata(t *testing.T) {
 		}
 		io.WriteString(w, `{"type":"Feature","properties":{"id":"DCZ001","type":"forecast","name":"District of Columbia","state":"DC","timeZone":["America/New_York"],"radarStation":null}}`)
 	})
-	got, err := c.Zones.Get(context.Background(), "forecast", "DCZ001")
+	got, _, err := c.Zones.Get(context.Background(), "forecast", "DCZ001")
 	if err != nil || got.Properties.ID != "DCZ001" || got.Properties.TimeZone[0] != "America/New_York" {
 		t.Fatalf("zone=%+v error=%v", got, err)
 	}
@@ -43,35 +43,35 @@ func TestZonesInputValidation(t *testing.T) {
 		{
 			name: "metadata: zone ID",
 			request: func(ctx context.Context, client *nws.Client, value string) (bool, error) {
-				result, err := client.Zones.Get(ctx, "forecast", value)
+				result, _, err := client.Zones.Get(ctx, "forecast", value)
 				return result == nil, err
 			},
 		},
 		{
 			name: "metadata: zone type",
 			request: func(ctx context.Context, client *nws.Client, value string) (bool, error) {
-				result, err := client.Zones.Get(ctx, value, "DCZ001")
+				result, _, err := client.Zones.Get(ctx, value, "DCZ001")
 				return result == nil, err
 			},
 		},
 		{
 			name: "list by type",
 			request: func(ctx context.Context, client *nws.Client, value string) (bool, error) {
-				result, err := client.Zones.ListByType(ctx, value, nil)
+				result, _, err := client.Zones.ListByType(ctx, value, nil)
 				return result == nil, err
 			},
 		},
 		{
 			name: "forecast: zone type",
 			request: func(ctx context.Context, client *nws.Client, value string) (bool, error) {
-				result, err := client.Zones.GetForecast(ctx, value, "DCZ001")
+				result, _, err := client.Zones.GetForecast(ctx, value, "DCZ001")
 				return result == nil, err
 			},
 		},
 		{
 			name: "forecast: zone ID",
 			request: func(ctx context.Context, client *nws.Client, value string) (bool, error) {
-				result, err := client.Zones.GetForecast(ctx, "forecast", value)
+				result, _, err := client.Zones.GetForecast(ctx, "forecast", value)
 				return result == nil, err
 			},
 		},
@@ -97,23 +97,23 @@ func TestZoneListings(t *testing.T) {
 	for _, tt := range []struct {
 		name     string
 		resource string
-		request  func(*nws.Client) (*nws.FeatureCollection[nws.Zone], error)
+		request  func(*nws.Client) (*nws.FeatureCollection[nws.Zone], *nws.Response, error)
 	}{
 		{
 			name: "all types", resource: "/zones?area=DC%2CMD&include_geometry=true",
-			request: func(c *nws.Client) (*nws.FeatureCollection[nws.Zone], error) {
+			request: func(c *nws.Client) (*nws.FeatureCollection[nws.Zone], *nws.Response, error) {
 				return c.Zones.List(t.Context(), url.Values{"area": {"DC,MD"}, "include_geometry": {"true"}})
 			},
 		},
 		{
 			name: "one type", resource: "/zones/forecast?point=38.8977%2C-77.0365",
-			request: func(c *nws.Client) (*nws.FeatureCollection[nws.Zone], error) {
+			request: func(c *nws.Client) (*nws.FeatureCollection[nws.Zone], *nws.Response, error) {
 				return c.Zones.ListByType(t.Context(), "forecast", url.Values{"point": {"38.8977,-77.0365"}})
 			},
 		},
 		{
 			name: "escaped type", resource: "/zones/type%2Fwith%3Fquery",
-			request: func(c *nws.Client) (*nws.FeatureCollection[nws.Zone], error) {
+			request: func(c *nws.Client) (*nws.FeatureCollection[nws.Zone], *nws.Response, error) {
 				return c.Zones.ListByType(t.Context(), "type/with?query", nil)
 			},
 		},
@@ -125,7 +125,7 @@ func TestZoneListings(t *testing.T) {
 				}
 				io.WriteString(w, `{"type":"FeatureCollection","features":[{"type":"Feature","geometry":null,"properties":{"id":"DCZ001","type":"forecast","state":null,"timeZone":["America/New_York"],"radarStation":null}}]}`)
 			})
-			got, err := tt.request(c)
+			got, _, err := tt.request(c)
 			if err != nil || got == nil || len(got.Features) != 1 || got.Features[0].Properties.ID != "DCZ001" ||
 				got.Features[0].Properties.State != nil || got.Features[0].Properties.RadarStation != nil {
 				t.Fatalf("zones=%+v error=%v", got, err)

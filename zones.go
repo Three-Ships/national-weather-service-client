@@ -34,38 +34,41 @@ type Zone struct {
 
 // List returns zones matching NWS query parameters such as area, type, point,
 // and include_geometry. Multi-value filters use comma-separated strings.
-func (s *ZonesService) List(ctx context.Context, query url.Values) (*FeatureCollection[Zone], error) {
+func (s *ZonesService) List(ctx context.Context, query url.Values) (*FeatureCollection[Zone], *Response, error) {
 	var result FeatureCollection[Zone]
-	if err := s.client.Get(ctx, "zones", query, &result); err != nil {
-		return nil, err
+	response, err := s.client.Get(ctx, "zones", query, &result)
+	if err != nil {
+		return nil, response, err
 	}
-	return &result, nil
+	return &result, response, nil
 }
 
 // ListByType selects the zone type in the route; query retains the list filters.
-func (s *ZonesService) ListByType(ctx context.Context, zoneType string, query url.Values) (*FeatureCollection[Zone], error) {
+func (s *ZonesService) ListByType(ctx context.Context, zoneType string, query url.Values) (*FeatureCollection[Zone], *Response, error) {
 	if err := validateResourceID(zoneType); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var result FeatureCollection[Zone]
-	if err := s.client.Get(ctx, "zones/"+url.PathEscape(zoneType), query, &result); err != nil {
-		return nil, err
+	response, err := s.client.Get(ctx, "zones/"+url.PathEscape(zoneType), query, &result)
+	if err != nil {
+		return nil, response, err
 	}
-	return &result, nil
+	return &result, response, nil
 }
 
 // Get fetches metadata by NWS zone type and identifier. To use a discovered
 // forecastZone URL directly, call Client.Get with an Feature[Zone].
-func (s *ZonesService) Get(ctx context.Context, zoneType, id string) (*Feature[Zone], error) {
+func (s *ZonesService) Get(ctx context.Context, zoneType, id string) (*Feature[Zone], *Response, error) {
 	if err := validateResourceID(zoneType); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := validateResourceID(id); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var result Feature[Zone]
-	if err := s.client.Get(ctx, "zones/"+url.PathEscape(zoneType)+"/"+url.PathEscape(id), nil, &result); err != nil {
-		return nil, err
+	response, err := s.client.Get(ctx, "zones/"+url.PathEscape(zoneType)+"/"+url.PathEscape(id), nil, &result)
+	if err != nil {
+		return nil, response, err
 	}
-	return &result, nil
+	return &result, response, nil
 }

@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -47,7 +48,7 @@ func ExampleClient_Get() {
 	var result struct {
 		Glossary []struct{ Term, Definition string }
 	}
-	if err := client.Get(context.Background(), "/glossary", nil, &result); err != nil {
+	if _, err := client.Get(context.Background(), "/glossary", nil, &result); err != nil {
 		panic(err)
 	}
 	fmt.Println(result.Glossary[0].Term)
@@ -127,7 +128,7 @@ func TestGetRequests(t *testing.T) {
 			client := newTestClient(t, WithBaseURL(server.URL+"/api"))
 			before := tt.query.Encode()
 			var got struct{ Glossary []struct{ Term string } }
-			if err := client.Get(t.Context(), tt.resource, tt.query, &got); err != nil {
+			if _, err := client.Get(t.Context(), tt.resource, tt.query, &got); err != nil {
 				t.Fatal(err)
 			}
 			if len(got.Glossary) != 1 || got.Glossary[0].Term != "rain" {
@@ -246,7 +247,7 @@ func TestTransportRetriesAndBodyOwnership(t *testing.T) {
 		return &http.Response{StatusCode: status, Header: make(http.Header), Body: trackedBody{Reader: strings.NewReader(body), closed: &closed}}, nil
 	})}))
 	var got struct{ OK bool }
-	if err := c.Get(context.Background(), "/test", nil, &got); err != nil {
+	if _, err := c.Get(context.Background(), "/test", nil, &got); err != nil {
 		t.Fatal(err)
 	}
 	if calls != 3 || closed != 2 || !got.OK {
@@ -286,7 +287,7 @@ func TestResponseFailures(t *testing.T) {
 				return &http.Response{StatusCode: tt.status, Header: make(http.Header), Body: trackedBody{Reader: reader, closed: &closed}}, nil
 			})}))
 			var dst any
-			err := client.Get(t.Context(), "/test", nil, &dst)
+			_, err := client.Get(t.Context(), "/test", nil, &dst)
 			var failure *RequestError
 			if !errors.As(err, &failure) || failure.StatusCode != tt.status || failure.Attempts != tt.wantAttempts ||
 				failure.Retryable != tt.retryable || calls != tt.wantAttempts || closed != tt.wantAttempts || len(failure.Body) != tt.wantBodyLength {
@@ -447,7 +448,7 @@ func TestThreeRedirectsInOneAttempt(t *testing.T) {
 	client := newTestClient(t, WithBaseURL(server.URL),
 		WithRetryPolicy(RetryPolicy{MaxAttempts: 1, InitialDelay: time.Nanosecond, MaxDelay: time.Nanosecond}))
 	var dst any
-	err := client.Get(t.Context(), "/start", nil, &dst)
+	_, err := client.Get(t.Context(), "/start", nil, &dst)
 	var failure *RequestError
 	if !errors.As(err, &failure) || failure.Attempts != 1 || failure.StatusCode != 200 ||
 		failure.Retryable || failure.URL != server.URL+"/hop/3" || calls != 4 {
@@ -492,7 +493,7 @@ func TestRawJSONPreservesUnknownFields(t *testing.T) {
 	var got struct {
 		Properties struct{ Periods []json.RawMessage }
 	}
-	if err := c.Get(context.Background(), "/forecast", nil, &got); err != nil {
+	if _, err := c.Get(context.Background(), "/forecast", nil, &got); err != nil {
 		t.Fatal(err)
 	}
 	if len(got.Properties.Periods) != 1 || !strings.Contains(string(got.Properties.Periods[0]), "newField") {
@@ -533,7 +534,7 @@ func TestGetNegotiatesJSONFormats(t *testing.T) {
 			var result struct {
 				Value int `json:"value"`
 			}
-			if err := c.Get(t.Context(), "/resource", nil, &result); err != nil || result.Value != 42 {
+			if _, err := c.Get(t.Context(), "/resource", nil, &result); err != nil || result.Value != 42 {
 				t.Fatalf("result=%+v error=%v", result, err)
 			}
 		})
@@ -703,6 +704,331 @@ func TestFullJitterBackoffBounds(t *testing.T) {
 			}
 			if !varied {
 				t.Fatal("backoff has no jitter")
+			}
+		})
+	}
+}
+
+func TestGetReturnsFinalResponse(t *testing.T) {
+	calls, finals := 0, 0
+	const body = `{"value":42}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.URL.Path == "/start" {
+			w.Header().Set("Cache-Control", "no-store")
+			http.Redirect(w, r, "/final?units=us", http.StatusFound)
+			return
+		}
+		finals++
+		if finals == 1 {
+			w.Header().Set("ETag", `"retry"`)
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Cache-Control", "public, max-age=300")
+		w.Header().Set("ETag", `"final"`)
+		w.WriteHeader(http.StatusCreated)
+		io.WriteString(w, body)
+	}))
+	t.Cleanup(server.Close)
+	client := newTestClient(t, WithBaseURL(server.URL), WithRequestInterval(0))
+	var result struct{ Value int }
+	response, err := client.Get(t.Context(), "/start", nil, &result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Value != 42 || calls != 4 || response == nil || response.URL != server.URL+"/final?units=us" ||
+		response.StatusCode != http.StatusCreated || response.Header.Get("Cache-Control") != "public, max-age=300" ||
+		response.Header.Get("ETag") != `"final"` || string(response.Body) != body {
+		t.Fatalf("result=%+v response=%+v calls=%d", result, response, calls)
+	}
+}
+
+func TestGetRetainsResponseOnDecodeError(t *testing.T) {
+	for _, tt := range []struct {
+		name, body  string
+		destination func() any
+	}{
+		{"malformed JSON", "{", func() any { return new(any) }},
+		{"type mismatch", `{"value":"not a number"}`, func() any { return new(struct{ Value int }) }},
+		{"nil destination", `{}`, func() any { return nil }},
+		{"non-pointer destination", `{}`, func() any { return struct{}{} }},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			calls, closed := 0, 0
+			client := newTestClient(t, WithRequestInterval(0), WithHTTPClient(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				calls++
+				return &http.Response{StatusCode: http.StatusOK,
+					Header: http.Header{"Etag": {`"source"`}},
+					Body:   trackedBody{Reader: strings.NewReader(tt.body), closed: &closed}}, nil
+			})}))
+			response, err := client.Get(t.Context(), "/custom", nil, tt.destination())
+			var failure *RequestError
+			if !errors.As(err, &failure) || failure.Retryable || failure.Attempts != 1 || calls != 1 || closed != 1 {
+				t.Fatalf("error=%+v calls=%d closed=%d", failure, calls, closed)
+			}
+			if response == nil || response.StatusCode != http.StatusOK || response.URL != "https://api.weather.gov/custom" ||
+				response.Header.Get("ETag") != `"source"` || string(response.Body) != tt.body {
+				t.Fatalf("response=%+v", response)
+			}
+		})
+	}
+}
+
+func TestResourceResponseFailureContract(t *testing.T) {
+	transportErr := errors.New("connection reset")
+	readErr := errors.New("incomplete body")
+	for _, tt := range []struct {
+		name                  string
+		latitude              float64
+		cancel                bool
+		status                int
+		body                  string
+		transportErr, readErr error
+		wantResponse          bool
+		wantCalls             int
+	}{
+		{name: "invalid input", latitude: 91},
+		{name: "canceled", cancel: true},
+		{name: "HTTP failure", status: http.StatusForbidden, body: `{"detail":"forbidden"}`, wantCalls: 1},
+		{name: "transport failure", transportErr: transportErr, wantCalls: 3},
+		{name: "body failure", status: http.StatusOK, readErr: readErr, wantCalls: 3},
+		{name: "decode failure", status: http.StatusOK, body: `{"properties":{"gridX":"invalid"}}`, wantCalls: 1, wantResponse: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			calls := 0
+			client := newTestClient(t, WithRequestInterval(0), WithHTTPClient(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				calls++
+				if tt.transportErr != nil {
+					return nil, tt.transportErr
+				}
+				var reader io.Reader = strings.NewReader(tt.body)
+				if tt.readErr != nil {
+					reader = failingReader{tt.readErr}
+				}
+				return &http.Response{StatusCode: tt.status, Header: http.Header{"Cache-Control": {"no-cache"}}, Body: io.NopCloser(reader)}, nil
+			})}))
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if tt.cancel {
+				cancel()
+			}
+			result, response, err := client.Points.Get(ctx, tt.latitude, 0)
+			if err == nil || result != nil || (response != nil) != tt.wantResponse || calls != tt.wantCalls {
+				t.Fatalf("result=%+v response=%+v error=%v calls=%d", result, response, err, calls)
+			}
+			if tt.wantResponse && (response.Header.Get("Cache-Control") != "no-cache" || string(response.Body) != tt.body) {
+				t.Fatalf("decode error lost response: %+v", response)
+			}
+			for _, cause := range []error{tt.transportErr, tt.readErr} {
+				if cause != nil && !errors.Is(err, cause) {
+					t.Fatalf("error=%v, want wrapped %v", err, cause)
+				}
+			}
+			if tt.cancel && !errors.Is(err, context.Canceled) {
+				t.Fatalf("error=%v, want cancellation", err)
+			}
+		})
+	}
+}
+
+func TestResourceServicesUseClientPolicy(t *testing.T) {
+	for _, tt := range []struct {
+		name, path string
+		request    func(context.Context, *Client) (*Response, error)
+	}{
+		{"points", "/api/points/38.8977,-77.0365", func(ctx context.Context, c *Client) (*Response, error) {
+			_, response, err := c.Points.Get(ctx, 38.8977, -77.0365)
+			return response, err
+		}},
+		{"gridpoints", "/api/gridpoints/LWX/97,71", func(ctx context.Context, c *Client) (*Response, error) {
+			_, response, err := c.Gridpoints.Get(ctx, "gridpoints/LWX/97,71")
+			return response, err
+		}},
+		{"alerts", "/api/alerts", func(ctx context.Context, c *Client) (*Response, error) {
+			_, response, err := c.Alerts.List(ctx, nil)
+			return response, err
+		}},
+		{"stations", "/api/stations/KDCA", func(ctx context.Context, c *Client) (*Response, error) {
+			_, response, err := c.Stations.Get(ctx, "KDCA")
+			return response, err
+		}},
+		{"zones", "/api/zones/forecast/DCZ001", func(ctx context.Context, c *Client) (*Response, error) {
+			_, response, err := c.Zones.Get(ctx, "forecast", "DCZ001")
+			return response, err
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			calls := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				if r.URL.Path != tt.path || r.Header.Get("User-Agent") != "service-test/1.0" {
+					t.Errorf("path=%s user-agent=%q", r.URL.Path, r.Header.Get("User-Agent"))
+				}
+				if calls == 1 {
+					w.WriteHeader(http.StatusServiceUnavailable)
+					return
+				}
+				w.Header().Set("Cache-Control", "public, max-age=300")
+				w.Header().Set("ETag", `"final"`)
+				io.WriteString(w, `{}`)
+			}))
+			t.Cleanup(server.Close)
+			client, err := NewClient("service-test/1.0", WithBaseURL(server.URL+"/api"),
+				WithHTTPClient(server.Client()), WithRequestInterval(0),
+				WithRetryPolicy(RetryPolicy{MaxAttempts: 2, InitialDelay: time.Nanosecond, MaxDelay: time.Nanosecond}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			response, err := tt.request(t.Context(), client)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if response == nil || response.URL != server.URL+tt.path || response.StatusCode != http.StatusOK ||
+				response.Header.Get("Cache-Control") != "public, max-age=300" || response.Header.Get("ETag") != `"final"` || string(response.Body) != `{}` {
+				t.Fatalf("response=%+v", response)
+			}
+			if calls != 2 {
+				t.Fatalf("HTTP attempts=%d, want 2", calls)
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			cancel()
+			if response, err := tt.request(ctx, client); response != nil || !errors.Is(err, context.Canceled) {
+				t.Fatalf("canceled operation error=%v", err)
+			}
+			if calls != 2 {
+				t.Fatalf("canceled operation reached HTTP: attempts=%d", calls)
+			}
+		})
+	}
+}
+
+func TestPointForecastDiscovery(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/points/38.8977,-77.0365":
+			fmt.Fprintf(w, `{"type":"Feature","properties":{"forecast":"http://%s/gridpoints/LWX/98,72/forecast"}}`, r.Host)
+		case "/gridpoints/LWX/98,72/forecast":
+			io.WriteString(w, `{"type":"Feature","properties":{"periods":[{"name":"Today","shortForecast":"Sunny"}]}}`)
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	client, err := NewClient("discovery-test", WithBaseURL(server.URL), WithRequestInterval(0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	point, _, err := client.Points.Get(t.Context(), 38.8977, -77.0365)
+	if err != nil {
+		t.Fatal(err)
+	}
+	forecast, _, err := client.Gridpoints.GetForecast(t.Context(), point.Properties.Forecast, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(forecast.Properties.Periods) != 1 || forecast.Properties.Periods[0].ShortForecast != "Sunny" {
+		t.Fatalf("forecast=%+v", forecast)
+	}
+}
+
+func TestPacingConcurrentCallsRetriesAndRedirects(t *testing.T) {
+	var mu sync.Mutex
+	var starts []time.Time
+	client := newTestClient(t, WithRequestInterval(20*time.Millisecond), WithHTTPClient(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		mu.Lock()
+		starts = append(starts, time.Now())
+		mu.Unlock()
+		status := http.StatusOK
+		headers := make(http.Header)
+		if r.URL.Path == "/retry" {
+			status = http.StatusServiceUnavailable
+		}
+		if r.URL.Path == "/redirect" {
+			status = http.StatusMovedPermanently
+			headers.Set("Location", "/final")
+		}
+		return &http.Response{StatusCode: status, Header: headers, Body: io.NopCloser(strings.NewReader("{}")), Request: r}, nil
+	})}))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var wg sync.WaitGroup
+	for _, path := range []string{"/one", "/two", "/retry", "/redirect"} {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _ = client.Fetch(ctx, path, nil, "")
+		}()
+	}
+	wg.Wait()
+	if len(starts) != 7 {
+		t.Fatalf("attempt count = %d, want 7", len(starts))
+	}
+	for i := 1; i < len(starts); i++ {
+		// Transport invocation can lag admission slightly under scheduler load.
+		if gap := starts[i].Sub(starts[i-1]); gap < 10*time.Millisecond {
+			t.Errorf("attempt gap = %s", gap)
+		}
+	}
+}
+
+func TestCancellationDuringRedirectPacing(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Location", "/final")
+		w.WriteHeader(http.StatusFound)
+	}))
+	t.Cleanup(server.Close)
+	client := newTestClient(t, WithBaseURL(server.URL), WithRequestInterval(time.Hour))
+	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer cancel()
+	_, err := client.Fetch(ctx, "/start", nil, "")
+	var failure *RequestError
+	if !errors.Is(err, context.DeadlineExceeded) || !errors.As(err, &failure) ||
+		failure.Attempts != 1 || failure.Retryable || calls.Load() != 1 {
+		t.Fatalf("calls=%d error=%v; want cancellation before redirect is sent", calls.Load(), err)
+	}
+}
+
+func TestCancellationDuringPacing(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		waiters int
+	}{
+		{name: "active timer", waiters: 1},
+		{name: "timer and queued callers", waiters: 10},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var calls atomic.Int32
+			client := newTestClient(t, WithRequestInterval(time.Hour),
+				WithHTTPClient(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+					calls.Add(1)
+					return testResponse([]byte("{}")), nil
+				})}))
+			if _, err := client.Fetch(t.Context(), "/test", nil, ""); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+			defer cancel()
+			done := make(chan error, tt.waiters)
+			for range tt.waiters {
+				go func() { _, err := client.Fetch(ctx, "/test", nil, ""); done <- err }()
+			}
+			for range tt.waiters {
+				select {
+				case err := <-done:
+					var failure *RequestError
+					if !errors.Is(err, context.DeadlineExceeded) || !errors.As(err, &failure) || failure.Attempts != 0 {
+						t.Fatalf("error=%v; want cancellation before Do", err)
+					}
+				case <-time.After(time.Second):
+					t.Fatal("pacer waiter failed to cancel")
+				}
+			}
+			if calls.Load() != 1 {
+				t.Fatalf("pacer admitted %d attempts", calls.Load())
 			}
 		})
 	}
