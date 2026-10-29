@@ -169,7 +169,7 @@ Files separate their responsibilities without requiring separate package imports
 | Endpoint methods and resource-specific types | `points.go`, `gridpoints.go`, `alerts.go`, `stations.go`, `zones.go` |
 | Related resource types and subresources | Resource-prefixed files such as `points_astronomy.go`, `gridpoints_forecast.go`, `stations_observations.go`, and `zones_forecast.go` |
 | Shared GeoJSON envelopes, measurements, and request errors | `geojson.go`, `quantitative_value.go`, `errors.go` |
-| Internal resource-identifier validation | `internal/endpoint/endpoint.go` |
+| Shared resource-identifier validation | `resource.go` |
 | Tests, executable examples, and response fixtures | Matching `*_test.go` files and `testdata/<resource>/` |
 
 Endpoint services validate inputs, build routes, and decode into resource types

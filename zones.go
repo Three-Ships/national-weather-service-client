@@ -3,8 +3,6 @@ package nws
 import (
 	"context"
 	"net/url"
-
-	"github.com/Three-Ships/national-weather-service-client/internal/endpoint"
 )
 
 // ZonesService provides access to NWS zones endpoints.
@@ -46,7 +44,7 @@ func (s *ZonesService) List(ctx context.Context, query url.Values) (*FeatureColl
 
 // ListByType selects the zone type in the route; query retains the list filters.
 func (s *ZonesService) ListByType(ctx context.Context, zoneType string, query url.Values) (*FeatureCollection[Zone], error) {
-	if err := endpoint.ValidateSegment(zoneType); err != nil {
+	if err := validateResourceID(zoneType); err != nil {
 		return nil, err
 	}
 	var result FeatureCollection[Zone]
@@ -59,10 +57,10 @@ func (s *ZonesService) ListByType(ctx context.Context, zoneType string, query ur
 // Get fetches metadata by NWS zone type and identifier. To use a discovered
 // forecastZone URL directly, call Client.Get with an Feature[Zone].
 func (s *ZonesService) Get(ctx context.Context, zoneType, id string) (*Feature[Zone], error) {
-	if err := endpoint.ValidateSegment(zoneType); err != nil {
+	if err := validateResourceID(zoneType); err != nil {
 		return nil, err
 	}
-	if err := endpoint.ValidateSegment(id); err != nil {
+	if err := validateResourceID(id); err != nil {
 		return nil, err
 	}
 	var result Feature[Zone]

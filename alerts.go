@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/url"
-
-	"github.com/Three-Ships/national-weather-service-client/internal/endpoint"
 )
 
 // AlertsService provides access to NWS alerts endpoints.
@@ -128,7 +126,7 @@ func (s *AlertsService) ListTypes(ctx context.Context) (*AlertEventTypes, error)
 
 // Get fetches an alert by its NWS identifier, not its API URL.
 func (s *AlertsService) Get(ctx context.Context, id string) (*Feature[Alert], error) {
-	if err := endpoint.ValidateSegment(id); err != nil {
+	if err := validateResourceID(id); err != nil {
 		return nil, err
 	}
 	var result Feature[Alert]

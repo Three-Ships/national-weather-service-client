@@ -3,8 +3,6 @@ package nws
 import (
 	"context"
 	"net/url"
-
-	"github.com/Three-Ships/national-weather-service-client/internal/endpoint"
 )
 
 // StationsService provides access to NWS stations endpoints.
@@ -45,7 +43,7 @@ type StationCollection struct {
 
 // Get fetches station metadata by its NWS identifier.
 func (s *StationsService) Get(ctx context.Context, id string) (*Feature[Station], error) {
-	if err := endpoint.ValidateSegment(id); err != nil {
+	if err := validateResourceID(id); err != nil {
 		return nil, err
 	}
 	var result Feature[Station]

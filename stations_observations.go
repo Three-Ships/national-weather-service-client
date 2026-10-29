@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"net/url"
 	"time"
-
-	"github.com/Three-Ships/national-weather-service-client/internal/endpoint"
 )
 
 // Observation models the NWS OpenAPI Observation schema used as
@@ -83,7 +81,7 @@ type ObservationCollection struct {
 // ListObservations returns station history with NWS query parameters such as
 // start, end, limit, and cursor. No time window or quality filter is imposed.
 func (s *StationsService) ListObservations(ctx context.Context, stationID string, query url.Values) (*ObservationCollection, error) {
-	if err := endpoint.ValidateSegment(stationID); err != nil {
+	if err := validateResourceID(stationID); err != nil {
 		return nil, err
 	}
 	var result ObservationCollection
@@ -96,7 +94,7 @@ func (s *StationsService) ListObservations(ctx context.Context, stationID string
 // GetLatestObservation accepts the NWS require_qc query parameter. It does not
 // impose a quality-control requirement on callers.
 func (s *StationsService) GetLatestObservation(ctx context.Context, stationID string, query url.Values) (*Feature[Observation], error) {
-	if err := endpoint.ValidateSegment(stationID); err != nil {
+	if err := validateResourceID(stationID); err != nil {
 		return nil, err
 	}
 	var result Feature[Observation]
@@ -109,7 +107,7 @@ func (s *StationsService) GetLatestObservation(ctx context.Context, stationID st
 // GetObservation requires an RFC3339 timestamp. Its original offset and precision
 // are retained in the request; invalid timestamps fail before HTTP.
 func (s *StationsService) GetObservation(ctx context.Context, stationID, timestamp string) (*Feature[Observation], error) {
-	if err := endpoint.ValidateSegment(stationID); err != nil {
+	if err := validateResourceID(stationID); err != nil {
 		return nil, err
 	}
 	if _, err := time.Parse(time.RFC3339, timestamp); err != nil {

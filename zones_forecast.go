@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/url"
-
-	"github.com/Three-Ships/national-weather-service-client/internal/endpoint"
 )
 
 // ZoneForecast models the NWS OpenAPI ZoneForecast schema used as ZoneForecastGeoJson.properties.
@@ -34,10 +32,10 @@ type ZoneForecastPeriod struct {
 // GetForecast retrieves a zone's current forecast without converting its periods
 // into grid forecast periods.
 func (s *ZonesService) GetForecast(ctx context.Context, zoneType, id string) (*Feature[ZoneForecast], error) {
-	if err := endpoint.ValidateSegment(zoneType); err != nil {
+	if err := validateResourceID(zoneType); err != nil {
 		return nil, err
 	}
-	if err := endpoint.ValidateSegment(id); err != nil {
+	if err := validateResourceID(id); err != nil {
 		return nil, err
 	}
 	var result Feature[ZoneForecast]
