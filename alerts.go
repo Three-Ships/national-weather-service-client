@@ -1,14 +1,18 @@
-// Package alerts retrieves NWS alerts without application-specific filtering.
-package alerts
+package nws
 
 import (
 	"context"
 	"encoding/json"
 	"net/url"
 
-	nws "github.com/Three-Ships/national-weather-service-client"
 	"github.com/Three-Ships/national-weather-service-client/internal/endpoint"
 )
+
+// AlertsService provides access to NWS alerts endpoints.
+// Use the corresponding field on a Client constructed with NewClient.
+type AlertsService struct {
+	client *Client
+}
 
 // Alert models the NWS OpenAPI Alert schema used as AlertGeoJson.properties.
 // It keeps NWS CAP-derived fields, with enums and timestamps left as strings.
@@ -67,26 +71,26 @@ type AlertReference struct {
 	Sent       string `json:"sent"`
 }
 
-// Collection models the NWS OpenAPI AlertCollectionGeoJson and
+// AlertCollection models the NWS OpenAPI AlertCollectionGeoJson and
 // ActiveAlertCollectionGeoJson schemas. Pagination is optional, belongs to
 // AlertCollectionGeoJson, and is not followed automatically.
 //
 // Schemas:
 // https://api.weather.gov/openapi.json#/components/schemas/AlertCollectionGeoJson
 // https://api.weather.gov/openapi.json#/components/schemas/ActiveAlertCollectionGeoJson
-type Collection struct {
-	nws.FeatureCollection[Alert]
-	Title      string              `json:"title,omitempty"`
-	Updated    string              `json:"updated,omitempty"`
-	Pagination *nws.PaginationInfo `json:"pagination,omitempty"`
+type AlertCollection struct {
+	FeatureCollection[Alert]
+	Title      string          `json:"title,omitempty"`
+	Updated    string          `json:"updated,omitempty"`
+	Pagination *PaginationInfo `json:"pagination,omitempty"`
 }
 
-// ActiveCounts models the inline success-response schema for GET /alerts/active/count,
+// ActiveAlertCounts models the inline success-response schema for GET /alerts/active/count,
 // grouping active alerts by land/marine coverage and NWS codes. Missing map keys
 // mean NWS supplied no count for that code.
 //
 // Schema: https://api.weather.gov/openapi.json#/paths/~1alerts~1active~1count/get/responses/200/content/application~1ld+json/schema
-type ActiveCounts struct {
+type ActiveAlertCounts struct {
 	Total   int            `json:"total"`
 	Land    int            `json:"land"`
 	Marine  int            `json:"marine"`
@@ -95,18 +99,18 @@ type ActiveCounts struct {
 	Zones   map[string]int `json:"zones"`
 }
 
-// EventTypes models the inline success-response schema for GET /alerts/types,
+// AlertEventTypes models the inline success-response schema for GET /alerts/types,
 // containing NWS's recognized alert event names.
 //
 // Schema: https://api.weather.gov/openapi.json#/paths/~1alerts~1types/get/responses/200/content/application~1ld+json/schema
-type EventTypes struct {
+type AlertEventTypes struct {
 	Types []string `json:"eventTypes"`
 }
 
 // CountActive returns the API's unfiltered active-alert counts.
-func CountActive(ctx context.Context, client *nws.Client) (*ActiveCounts, error) {
-	var result ActiveCounts
-	if err := client.Get(ctx, "alerts/active/count", nil, &result); err != nil {
+func (s *AlertsService) CountActive(ctx context.Context) (*ActiveAlertCounts, error) {
+	var result ActiveAlertCounts
+	if err := s.client.Get(ctx, "alerts/active/count", nil, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -114,31 +118,31 @@ func CountActive(ctx context.Context, client *nws.Client) (*ActiveCounts, error)
 
 // ListTypes returns recognized event names without treating the list as a fixed
 // enum enforced by the client.
-func ListTypes(ctx context.Context, client *nws.Client) (*EventTypes, error) {
-	var result EventTypes
-	if err := client.Get(ctx, "alerts/types", nil, &result); err != nil {
+func (s *AlertsService) ListTypes(ctx context.Context) (*AlertEventTypes, error) {
+	var result AlertEventTypes
+	if err := s.client.Get(ctx, "alerts/types", nil, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // Get fetches an alert by its NWS identifier, not its API URL.
-func Get(ctx context.Context, client *nws.Client, id string) (*nws.Feature[Alert], error) {
+func (s *AlertsService) Get(ctx context.Context, id string) (*Feature[Alert], error) {
 	if err := endpoint.ValidateSegment(id); err != nil {
 		return nil, err
 	}
-	var result nws.Feature[Alert]
-	if err := client.Get(ctx, "alerts/"+url.PathEscape(id), nil, &result); err != nil {
+	var result Feature[Alert]
+	if err := s.client.Get(ctx, "alerts/"+url.PathEscape(id), nil, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // List returns one page of alerts with NWS query parameters (including cursor).
-// Follow Collection.Pagination.Next with Client.Get into a Collection.
-func List(ctx context.Context, client *nws.Client, query url.Values) (*Collection, error) {
-	var result Collection
-	if err := client.Get(ctx, "alerts", query, &result); err != nil {
+// Follow AlertCollection.Pagination.Next with Client.Get into an AlertCollection.
+func (s *AlertsService) List(ctx context.Context, query url.Values) (*AlertCollection, error) {
+	var result AlertCollection
+	if err := s.client.Get(ctx, "alerts", query, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -146,9 +150,9 @@ func List(ctx context.Context, client *nws.Client, query url.Values) (*Collectio
 
 // ListActive returns currently active alerts with caller-selected filters.
 // No status filter is imposed; pass status=actual to exclude exercises/tests.
-func ListActive(ctx context.Context, client *nws.Client, query url.Values) (*Collection, error) {
-	var result Collection
-	if err := client.Get(ctx, "alerts/active", query, &result); err != nil {
+func (s *AlertsService) ListActive(ctx context.Context, query url.Values) (*AlertCollection, error) {
+	var result AlertCollection
+	if err := s.client.Get(ctx, "alerts/active", query, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil

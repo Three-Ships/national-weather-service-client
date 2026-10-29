@@ -1,14 +1,13 @@
-package gridpoints_test
+package nws_test
 
 import (
 	"encoding/json"
 	"fmt"
 
 	nws "github.com/Three-Ships/national-weather-service-client"
-	"github.com/Three-Ships/national-weather-service-client/endpoints/gridpoints"
 )
 
-func ExampleForecastPeriod() {
+func ExampleGridpointForecastPeriod() {
 	// Display both NWS formats without converting their values or units.
 	formatValue := func(raw json.RawMessage, scalarUnit string) string {
 		var value any
@@ -34,7 +33,7 @@ func ExampleForecastPeriod() {
 		}
 	}
 
-	periods := []gridpoints.ForecastPeriod{
+	periods := []nws.GridpointForecastPeriod{
 		{
 			Temperature:     json.RawMessage(`32`),
 			TemperatureUnit: "F",

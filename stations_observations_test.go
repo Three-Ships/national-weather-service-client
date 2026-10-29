@@ -1,4 +1,4 @@
-package stations_test
+package nws_test
 
 import (
 	"encoding/json"
@@ -10,34 +10,33 @@ import (
 	"testing"
 
 	nws "github.com/Three-Ships/national-weather-service-client"
-	"github.com/Three-Ships/national-weather-service-client/endpoints/stations"
 )
 
 func TestObservationsKeepSourceFields(t *testing.T) {
-	body, err := os.ReadFile("testdata/observation.json")
+	body, err := os.ReadFile("testdata/stations/observation.json")
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, tt := range []struct {
 		name     string
 		resource string
-		request  func(*nws.Client) (*nws.Feature[stations.Observation], error)
+		request  func(*nws.Client) (*nws.Feature[nws.Observation], error)
 	}{
 		{
 			name: "latest", resource: "/stations/KDCA/observations/latest?require_qc=true",
-			request: func(c *nws.Client) (*nws.Feature[stations.Observation], error) {
-				return stations.GetLatestObservation(t.Context(), c, "KDCA", url.Values{"require_qc": {"true"}})
+			request: func(c *nws.Client) (*nws.Feature[nws.Observation], error) {
+				return c.Stations.GetLatestObservation(t.Context(), "KDCA", url.Values{"require_qc": {"true"}})
 			},
 		},
 		{
 			name: "timestamp", resource: "/stations/KDCA/observations/2026-01-01T07:00:00.123-05:00",
-			request: func(c *nws.Client) (*nws.Feature[stations.Observation], error) {
-				return stations.GetObservation(t.Context(), c, "KDCA", "2026-01-01T07:00:00.123-05:00")
+			request: func(c *nws.Client) (*nws.Feature[nws.Observation], error) {
+				return c.Stations.GetObservation(t.Context(), "KDCA", "2026-01-01T07:00:00.123-05:00")
 			},
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+			c := newStationsTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.RequestURI() != tt.resource {
 					t.Errorf("resource=%s, want %s", r.URL.RequestURI(), tt.resource)
 				}
@@ -79,19 +78,19 @@ func TestObservationsKeepSourceFields(t *testing.T) {
 }
 
 func TestObservationHistory(t *testing.T) {
-	body, err := os.ReadFile("testdata/observation.json")
+	body, err := os.ReadFile("testdata/stations/observation.json")
 	if err != nil {
 		t.Fatal(err)
 	}
 	collection := []byte(`{"type":"FeatureCollection","features":[` + string(body) + `],"pagination":{"next":"https://api.weather.gov/stations/KDCA/observations?cursor=next"}}`)
-	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+	c := newStationsTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/stations/KDCA/observations" || r.URL.Query().Get("start") != "2026-01-01T00:00:00Z" ||
 			r.URL.Query().Get("end") != "2026-01-02T00:00:00Z" || r.URL.Query().Get("limit") != "10" || r.URL.Query().Get("cursor") != "next" {
 			t.Errorf("history resource=%s", r.URL)
 		}
 		w.Write(collection)
 	})
-	got, err := stations.ListObservations(t.Context(), c, "KDCA", url.Values{
+	got, err := c.Stations.ListObservations(t.Context(), "KDCA", url.Values{
 		"start": {"2026-01-01T00:00:00Z"}, "end": {"2026-01-02T00:00:00Z"}, "limit": {"10"}, "cursor": {"next"},
 	})
 	if err != nil {
@@ -103,10 +102,10 @@ func TestObservationHistory(t *testing.T) {
 }
 
 func TestNullCloudLayers(t *testing.T) {
-	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+	c := newStationsTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, `{"type":"Feature","properties":{"cloudLayers":null}}`)
 	})
-	got, err := stations.GetLatestObservation(t.Context(), c, "KDCA", nil)
+	got, err := c.Stations.GetLatestObservation(t.Context(), "KDCA", nil)
 	if err != nil || got == nil || got.Properties.CloudLayers != nil {
 		t.Fatalf("result=%+v error=%v", got, err)
 	}

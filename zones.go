@@ -1,13 +1,17 @@
-// Package zones retrieves NWS forecast, county, fire, and marine zone metadata.
-package zones
+package nws
 
 import (
 	"context"
 	"net/url"
 
-	nws "github.com/Three-Ships/national-weather-service-client"
 	"github.com/Three-Ships/national-weather-service-client/internal/endpoint"
 )
+
+// ZonesService provides access to NWS zones endpoints.
+// Use the corresponding field on a Client constructed with NewClient.
+type ZonesService struct {
+	client *Client
+}
 
 // Zone models the NWS OpenAPI Zone schema used as ZoneGeoJson.properties.
 // It describes a forecast, county, fire, or marine zone.
@@ -32,37 +36,37 @@ type Zone struct {
 
 // List returns zones matching NWS query parameters such as area, type, point,
 // and include_geometry. Multi-value filters use comma-separated strings.
-func List(ctx context.Context, client *nws.Client, query url.Values) (*nws.FeatureCollection[Zone], error) {
-	var result nws.FeatureCollection[Zone]
-	if err := client.Get(ctx, "zones", query, &result); err != nil {
+func (s *ZonesService) List(ctx context.Context, query url.Values) (*FeatureCollection[Zone], error) {
+	var result FeatureCollection[Zone]
+	if err := s.client.Get(ctx, "zones", query, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // ListByType selects the zone type in the route; query retains the list filters.
-func ListByType(ctx context.Context, client *nws.Client, zoneType string, query url.Values) (*nws.FeatureCollection[Zone], error) {
+func (s *ZonesService) ListByType(ctx context.Context, zoneType string, query url.Values) (*FeatureCollection[Zone], error) {
 	if err := endpoint.ValidateSegment(zoneType); err != nil {
 		return nil, err
 	}
-	var result nws.FeatureCollection[Zone]
-	if err := client.Get(ctx, "zones/"+url.PathEscape(zoneType), query, &result); err != nil {
+	var result FeatureCollection[Zone]
+	if err := s.client.Get(ctx, "zones/"+url.PathEscape(zoneType), query, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
 }
 
 // Get fetches metadata by NWS zone type and identifier. To use a discovered
-// forecastZone URL directly, call Client.Get with an nws.Feature[Zone].
-func Get(ctx context.Context, client *nws.Client, zoneType, id string) (*nws.Feature[Zone], error) {
+// forecastZone URL directly, call Client.Get with an Feature[Zone].
+func (s *ZonesService) Get(ctx context.Context, zoneType, id string) (*Feature[Zone], error) {
 	if err := endpoint.ValidateSegment(zoneType); err != nil {
 		return nil, err
 	}
 	if err := endpoint.ValidateSegment(id); err != nil {
 		return nil, err
 	}
-	var result nws.Feature[Zone]
-	if err := client.Get(ctx, "zones/"+url.PathEscape(zoneType)+"/"+url.PathEscape(id), nil, &result); err != nil {
+	var result Feature[Zone]
+	if err := s.client.Get(ctx, "zones/"+url.PathEscape(zoneType)+"/"+url.PathEscape(id), nil, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil

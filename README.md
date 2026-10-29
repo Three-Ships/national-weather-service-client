@@ -21,8 +21,6 @@ import (
     "time"
 
     nws "github.com/Three-Ships/national-weather-service-client"
-    "github.com/Three-Ships/national-weather-service-client/endpoints/gridpoints"
-    "github.com/Three-Ships/national-weather-service-client/endpoints/points"
 )
 
 client, err := nws.NewClient("example-company-weather/1.0 (weather-ops@example.com)")
@@ -33,7 +31,7 @@ if err != nil {
 ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 defer cancel()
 
-point, err := points.Get(ctx, client, 38.8977, -77.0365)
+point, err := client.Points.Get(ctx, 38.8977, -77.0365)
 if err != nil {
     return err
 }
@@ -42,7 +40,7 @@ if point.Properties.Forecast == "" {
 }
 
 // Follow the NWS link because grid assignments can change.
-forecast, err := gridpoints.GetForecast(ctx, client, point.Properties.Forecast, nil)
+forecast, err := client.Gridpoints.GetForecast(ctx, point.Properties.Forecast, nil)
 if err != nil {
     return err
 }
@@ -63,6 +61,22 @@ the caller's context deadline also bounds retry waits.
 Resource URLs and redirects must remain within the configured API origin and
 path prefix. Query parameters use `url.Values`; malformed encoding in a resource
 URL is rejected.
+
+### Resource services and types
+
+`NewClient` initializes `Points`, `Gridpoints`, `Alerts`, `Stations`, and `Zones`.
+All services share the same connection pool, retries, and pacing. Reuse the client
+and pass a context to each operation; no separate service setup is needed.
+
+Response types live in the `nws` package, for example `nws.Point`,
+`nws.AlertCollection`, `nws.GridpointForecast`, and `nws.ZoneForecast`.
+`nws.Feature[T]` wraps a resource's properties with its GeoJSON metadata.
+`Client.Get` and `Client.Fetch` remain available for unmodeled endpoints,
+caller-defined response types, and discovered links.
+
+This replaces the previous `endpoints/*` package API. Change calls such as
+`points.Get(ctx, client, lat, lon)` to `client.Points.Get(ctx, lat, lon)` and
+import response types from `nws` instead of an endpoint package.
 
 ### Configuration
 
@@ -91,7 +105,7 @@ reapply initial filters: the continuation URL already contains its query.
 Stop when pagination is absent or its next URL is empty. Use an overall context
 deadline or an application page limit to bound the traversal.
 
-See the executable [alert pagination example](endpoints/alerts/example_test.go)
+See the executable [alert pagination example](alerts_example_test.go)
 for the complete loop. Station and observation collections follow the same pattern.
 
 ### Working with source values
@@ -102,7 +116,7 @@ timestamps and convert units in your application when needed.
 
 Forecast temperature and wind fields use `json.RawMessage` because NWS can return
 scalar values or quantitative-value objects depending on feature flags. The
-[forecast decoding example](endpoints/gridpoints/example_test.go) handles both
+[forecast decoding example](gridpoints_example_test.go) handles both
 formats and distinguishes missing data from zero without converting units.
 If your application requests a fixed format, use `Client.Get` with your own
 response type. Feature-flag headers can be added by a caller-owned transport.
@@ -149,7 +163,8 @@ test needs transport or response-stream failures.
 Bug reports and pull requests are welcome on GitHub at [https://github.com/Three-Ships/national-weather-service-client](https://github.com/Three-Ships/national-weather-service-client).
 
 Use the Go version in `.tool-versions` and run `make check` before submitting
-changes. `make fmt` formats Go files, `make cover` writes a coverage profile, and
+changes. See [CONTRIBUTING.md](CONTRIBUTING.md) for the endpoint extension pattern.
+`make fmt` formats Go files, `make cover` writes a coverage profile, and
 `lefthook install` enables the pre-commit checks. Keep tests beside their source
 in matching `_test.go` files, with named tables for related cases.
 

@@ -1,4 +1,4 @@
-package points_test
+package nws_test
 
 import (
 	"context"
@@ -8,10 +8,9 @@ import (
 	"net/http/httptest"
 
 	nws "github.com/Three-Ships/national-weather-service-client"
-	"github.com/Three-Ships/national-weather-service-client/endpoints/points"
 )
 
-func ExampleGet() {
+func ExamplePointsService_Get() {
 	// A local server keeps this example independent of live weather data.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, `{"type":"Feature","properties":{"gridId":"LWX","timeZone":"America/New_York","forecastGridData":"https://api.weather.gov/gridpoints/LWX/97,71"}}`)
@@ -21,7 +20,7 @@ func ExampleGet() {
 	if err != nil {
 		panic(err)
 	}
-	point, err := points.Get(context.Background(), client, 38.8977, -77.0365)
+	point, err := client.Points.Get(context.Background(), 38.8977, -77.0365)
 	if err != nil {
 		panic(err)
 	}

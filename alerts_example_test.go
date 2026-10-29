@@ -1,4 +1,4 @@
-package alerts_test
+package nws_test
 
 import (
 	"context"
@@ -10,10 +10,9 @@ import (
 	"time"
 
 	nws "github.com/Three-Ships/national-weather-service-client"
-	"github.com/Three-Ships/national-weather-service-client/endpoints/alerts"
 )
 
-func ExampleList() {
+func ExampleAlertsService_List() {
 	// A local server supplies two pages so the example does not contact NWS.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.RequestURI() {
@@ -34,7 +33,7 @@ func ExampleList() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	page, err := alerts.List(ctx, client, url.Values{"area": {"DC"}, "status": {"actual"}})
+	page, err := client.Alerts.List(ctx, url.Values{"area": {"DC"}, "status": {"actual"}})
 	if err != nil {
 		panic(err)
 	}
@@ -47,7 +46,7 @@ func ExampleList() {
 		}
 		// Next contains the continuation query; do not reapply initial filters.
 		// Decode into a fresh collection so omitted metadata cannot remain stale.
-		var next alerts.Collection
+		var next nws.AlertCollection
 		if err := client.Get(ctx, page.Pagination.Next, nil, &next); err != nil {
 			panic(err)
 		}
