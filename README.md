@@ -31,10 +31,11 @@ if err != nil {
 ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 defer cancel()
 
-point, _, err := client.Points.Get(ctx, 38.8977, -77.0365)
+point, response, err := client.Points.Get(ctx, 38.8977, -77.0365)
 if err != nil {
     return err
 }
+fmt.Println(response.StatusCode, response.Header.Get("Cache-Control"))
 if point.Properties.Forecast == "" {
     return errors.New("point has no forecast URL")
 }
@@ -78,49 +79,6 @@ This replaces the previous `endpoints/*` package API. Change calls such as
 `points.Get(ctx, client, lat, lon)` to `client.Points.Get(ctx, lat, lon)` and
 import response types from `nws` instead of an endpoint package.
 
-### Response metadata
-
-Resource methods return `(result, *nws.Response, error)`. The response contains the
-final URL, status, headers, and unmodified body from the successful HTTP fetch:
-
-```go
-point, response, err := client.Points.Get(ctx, latitude, longitude)
-if err != nil {
-    return err
-}
-fmt.Println(point.Properties.TimeZone, response.Header.Get("Cache-Control"))
-```
-
-Use `_` when you do not need metadata. `Client.Get` returns `(*nws.Response, error)`
-while decoding into your own type, so custom decoding shapes also retain headers:
-
-```go
-var selected struct {
-    Properties struct {
-        TimeZone string `json:"timeZone"`
-    } `json:"properties"`
-}
-response, err := client.Get(ctx, resourceURL, nil, &selected)
-if err != nil {
-    return err
-}
-fmt.Println(selected.Properties.TimeZone, response.Header.Get("ETag"))
-```
-
-On JSON decoding errors, the response is still available, but typed resource
-methods return a nil result; do not use a partially decoded `Client.Get`
-destination. Input validation and fetch failures return a nil response. HTTP
-failure details remain available through `RequestError`. Bodies are buffered and
-closed before return; callers have nothing to close. Metadata describes the final
-response, not earlier retries or redirects.
-
-The client does not cache responses or interpret cache headers. Applications own
-freshness calculations, cache limits, and stale-data policy. `Client.Fetch`
-continues to support raw bodies and non-JSON formats.
-
-This changes the return signatures from v0.1.0: add a response variable or `_` to
-resource calls, and capture or discard the response from `Client.Get`.
-
 ### Configuration
 
 Pass options to `NewClient` to override the defaults:
@@ -148,7 +106,7 @@ reapply initial filters: the continuation URL already contains its query.
 Stop when pagination is absent or its next URL is empty. Use an overall context
 deadline or an application page limit to bound the traversal.
 
-See the executable [alert pagination example](alerts_example_test.go)
+See the executable [alert pagination example](alerts_test.go)
 for the complete loop. Station and observation collections follow the same pattern.
 
 ### Working with source values
@@ -159,7 +117,7 @@ timestamps and convert units in your application when needed.
 
 Forecast temperature and wind fields use `json.RawMessage` because NWS can return
 scalar values or quantitative-value objects depending on feature flags. The
-[forecast decoding example](gridpoints_example_test.go) handles both
+[forecast decoding example](gridpoints_forecast_test.go) handles both
 formats and distinguishes missing data from zero without converting units.
 If your application requests a fixed format, use `Client.Get` with your own
 response type. Feature-flag headers can be added by a caller-owned transport.
