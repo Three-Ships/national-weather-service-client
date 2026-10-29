@@ -1,4 +1,4 @@
-package alerts_test
+package nws_test
 
 import (
 	"context"
@@ -11,10 +11,9 @@ import (
 	"testing"
 
 	nws "github.com/Three-Ships/national-weather-service-client"
-	"github.com/Three-Ships/national-weather-service-client/endpoints/alerts"
 )
 
-func newTestClient(t *testing.T, handler http.HandlerFunc) *nws.Client {
+func newAlertsTestClient(t *testing.T, handler http.HandlerFunc) *nws.Client {
 	t.Helper()
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
@@ -32,18 +31,18 @@ func TestAlertsKeepSourceFields(t *testing.T) {
 			path = "/alerts/active"
 		}
 		t.Run(path, func(t *testing.T) {
-			c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+			c := newAlertsTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.EscapedPath() != path {
 					t.Errorf("path = %q, want %q", r.URL.EscapedPath(), path)
 				}
-				http.ServeFile(w, r, "testdata/alerts.json")
+				http.ServeFile(w, r, "testdata/alerts/alerts.json")
 			})
-			var got *alerts.Collection
+			var got *nws.AlertCollection
 			var err error
 			if active {
-				got, err = alerts.ListActive(context.Background(), c, url.Values{"status": {"actual"}})
+				got, err = c.Alerts.ListActive(context.Background(), url.Values{"status": {"actual"}})
 			} else {
-				got, err = alerts.List(context.Background(), c, nil)
+				got, err = c.Alerts.List(context.Background(), nil)
 			}
 			if err != nil {
 				t.Fatal(err)
@@ -59,7 +58,7 @@ func TestAlertsKeepSourceFields(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			var decoded alerts.Collection
+			var decoded nws.AlertCollection
 			if err := json.Unmarshal(encoded, &decoded); err != nil {
 				t.Fatal(err)
 			}
@@ -72,7 +71,7 @@ func TestAlertsKeepSourceFields(t *testing.T) {
 	}
 }
 
-func TestGet(t *testing.T) {
+func TestAlertsGet(t *testing.T) {
 	for _, tt := range []struct {
 		name, id, wantPath string
 		wantErr            bool
@@ -84,7 +83,7 @@ func TestGet(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			calls := 0
-			client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+			client := newAlertsTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 				calls++
 				if tt.wantErr {
 					t.Error("invalid identifier reached HTTP")
@@ -94,7 +93,7 @@ func TestGet(t *testing.T) {
 				}
 				io.WriteString(w, `{"type":"Feature","properties":{"id":"id/with?query"}}`)
 			})
-			got, err := alerts.Get(t.Context(), client, tt.id)
+			got, err := client.Alerts.Get(t.Context(), tt.id)
 			if (err != nil) != tt.wantErr || (got == nil) != tt.wantErr {
 				t.Fatalf("result=%+v error=%v; want error=%t", got, err, tt.wantErr)
 			}
@@ -110,14 +109,14 @@ func TestGet(t *testing.T) {
 }
 
 func TestActiveCounts(t *testing.T) {
-	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+	c := newAlertsTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/alerts/active/count" || !strings.Contains(r.Header.Get("Accept"), "application/ld+json") {
 			t.Errorf("resource=%s Accept=%s", r.URL, r.Header.Get("Accept"))
 		}
 		w.Header().Set("Content-Type", "application/ld+json")
 		io.WriteString(w, `{"total":3,"land":2,"marine":1,"regions":{"AL":1},"areas":{"DC":2},"zones":{"DCZ001":2}}`)
 	})
-	got, err := alerts.CountActive(t.Context(), c)
+	got, err := c.Alerts.CountActive(t.Context())
 	if err != nil || got == nil || got.Total != 3 || got.Land != 2 || got.Marine != 1 ||
 		got.Regions["AL"] != 1 || got.Areas["DC"] != 2 || got.Zones["DCZ001"] != 2 {
 		t.Fatalf("counts=%+v error=%v", got, err)
@@ -125,13 +124,13 @@ func TestActiveCounts(t *testing.T) {
 }
 
 func TestRecognizedEventTypes(t *testing.T) {
-	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+	c := newAlertsTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/alerts/types" || !strings.Contains(r.Header.Get("Accept"), "application/ld+json") {
 			t.Errorf("resource=%s Accept=%s", r.URL, r.Header.Get("Accept"))
 		}
 		io.WriteString(w, `{"eventTypes":["Winter Weather Advisory","Future Event"]}`)
 	})
-	got, err := alerts.ListTypes(t.Context(), c)
+	got, err := c.Alerts.ListTypes(t.Context())
 	if err != nil || got == nil || len(got.Types) != 2 || got.Types[1] != "Future Event" {
 		t.Fatalf("types=%+v error=%v", got, err)
 	}

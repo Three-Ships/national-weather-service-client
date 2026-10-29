@@ -1,4 +1,4 @@
-package points
+package nws
 
 // AstronomicalData models the NWS OpenAPI AstronomicalData schema, keeping event
 // times as RFC3339 strings. Events may be null during polar day or night. The

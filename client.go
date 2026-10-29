@@ -17,7 +17,15 @@ import (
 
 // Client is safe for concurrent requests when constructed with NewClient.
 // Reuse an instance to share connection pooling and pacing; do not copy it after use.
+// Resource services share this client's HTTP policy. Do not replace service fields
+// while the client is in use.
 type Client struct {
+	Points     *PointsService
+	Gridpoints *GridpointsService
+	Alerts     *AlertsService
+	Stations   *StationsService
+	Zones      *ZonesService
+
 	httpClient  *http.Client
 	baseURL     *url.URL
 	userAgent   string
@@ -126,6 +134,11 @@ func NewClient(userAgent string, options ...Option) (*Client, error) {
 		return nil
 	}
 	c.httpClient = &hc
+	c.Points = &PointsService{client: c}
+	c.Gridpoints = &GridpointsService{client: c}
+	c.Alerts = &AlertsService{client: c}
+	c.Stations = &StationsService{client: c}
+	c.Zones = &ZonesService{client: c}
 	return c, nil
 }
 

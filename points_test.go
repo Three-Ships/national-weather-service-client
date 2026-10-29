@@ -1,4 +1,4 @@
-package points_test
+package nws_test
 
 import (
 	"context"
@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	nws "github.com/Three-Ships/national-weather-service-client"
-	"github.com/Three-Ships/national-weather-service-client/endpoints/points"
 )
 
 func TestPointDiscovery(t *testing.T) {
@@ -16,14 +15,14 @@ func TestPointDiscovery(t *testing.T) {
 		if r.URL.EscapedPath() != "/points/38.8977,-77.0365" {
 			t.Errorf("path = %q", r.URL.EscapedPath())
 		}
-		http.ServeFile(w, r, "testdata/point.json")
+		http.ServeFile(w, r, "testdata/points/point.json")
 	}))
 	t.Cleanup(server.Close)
 	c, err := nws.NewClient("test-reader", nws.WithBaseURL(server.URL))
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := points.Get(context.Background(), c, 38.897699, -77.036501)
+	got, err := c.Points.Get(context.Background(), 38.897699, -77.036501)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +58,7 @@ func TestInvalidCoordinates(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if _, err := points.Get(context.Background(), c, tt.lat, tt.lon); err == nil {
+			if _, err := c.Points.Get(context.Background(), tt.lat, tt.lon); err == nil {
 				t.Fatal("expected coordinate error")
 			}
 		})

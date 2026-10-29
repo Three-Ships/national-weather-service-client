@@ -1,53 +1,56 @@
-// Package gridpoints retrieves raw grid layers and daily or hourly forecasts.
-package gridpoints
+package nws
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
-
-	nws "github.com/Three-Ships/national-weather-service-client"
 )
 
-// IntervalValue generalizes validTime/value entries in NWS OpenAPI gridpoint
+// GridpointsService provides access to NWS gridpoints endpoints.
+// Use the corresponding field on a Client constructed with NewClient.
+type GridpointsService struct {
+	client *Client
+}
+
+// GridpointIntervalValue generalizes validTime/value entries in NWS OpenAPI gridpoint
 // layers. GridpointQuantitativeValueLayer entries use *float64 for T; weather
 // and hazard entries use slices of their categorical values. ValidTime remains
 // an ISO 8601 start/duration or start/end string. Callers decide how to expand
 // or align the interval.
 //
 // Schema: https://api.weather.gov/openapi.json#/components/schemas/GridpointQuantitativeValueLayer/properties/values/items
-type IntervalValue[T any] struct {
+type GridpointIntervalValue[T any] struct {
 	ValidTime string `json:"validTime"`
 	Value     T      `json:"value"`
 }
 
-// Layer generalizes the NWS OpenAPI GridpointQuantitativeValueLayer schema and
-// the inline weather/hazard layers in Gridpoint. Numeric layers use Layer[*float64].
+// GridpointLayer generalizes the NWS OpenAPI GridpointQuantitativeValueLayer schema and
+// the inline weather/hazard layers in Gridpoint. Numeric layers use GridpointLayer[*float64].
 // Values retain source order; UOM may be absent for categorical layers.
 //
 // Schema: https://api.weather.gov/openapi.json#/components/schemas/GridpointQuantitativeValueLayer
-type Layer[T any] struct {
-	UOM    string             `json:"uom,omitempty"`
-	Values []IntervalValue[T] `json:"values"`
+type GridpointLayer[T any] struct {
+	UOM    string                      `json:"uom,omitempty"`
+	Values []GridpointIntervalValue[T] `json:"values"`
 }
 
-// Weather models an inline weather value in the NWS OpenAPI Gridpoint schema,
+// GridpointWeather models an inline weather value in the NWS OpenAPI Gridpoint schema,
 // describing one expected weather phenomenon in a grid interval.
 //
 // Schema: https://api.weather.gov/openapi.json#/components/schemas/Gridpoint/properties/weather/properties/values/items/properties/value/items
-type Weather struct {
-	Coverage   *string               `json:"coverage"`
-	Weather    *string               `json:"weather"`
-	Intensity  *string               `json:"intensity"`
-	Visibility nws.QuantitativeValue `json:"visibility"`
-	Attributes []string              `json:"attributes"`
+type GridpointWeather struct {
+	Coverage   *string           `json:"coverage"`
+	Weather    *string           `json:"weather"`
+	Intensity  *string           `json:"intensity"`
+	Visibility QuantitativeValue `json:"visibility"`
+	Attributes []string          `json:"attributes"`
 }
 
-// Hazard models an inline hazard value in the NWS OpenAPI Gridpoint schema,
+// GridpointHazard models an inline hazard value in the NWS OpenAPI Gridpoint schema,
 // retaining source P-VTEC codes and a nullable event number.
 //
 // Schema: https://api.weather.gov/openapi.json#/components/schemas/Gridpoint/properties/hazards/properties/values/items/properties/value/items
-type Hazard struct {
+type GridpointHazard struct {
 	Phenomenon   string `json:"phenomenon"`
 	Significance string `json:"significance"`
 	EventNumber  *int   `json:"event_number"`
@@ -63,20 +66,20 @@ type Hazard struct {
 //
 // Schema: https://api.weather.gov/openapi.json#/components/schemas/Gridpoint
 type Gridpoint struct {
-	ID             string                     `json:"@id,omitempty"`
-	Type           string                     `json:"@type,omitempty"`
-	Context        json.RawMessage            `json:"@context,omitempty"`
-	Geometry       string                     `json:"geometry,omitempty"`
-	UpdateTime     string                     `json:"updateTime"`
-	ValidTimes     string                     `json:"validTimes"`
-	Elevation      nws.QuantitativeValue      `json:"elevation"`
-	ForecastOffice string                     `json:"forecastOffice"`
-	GridID         string                     `json:"gridId"`
-	GridX          int                        `json:"gridX"`
-	GridY          int                        `json:"gridY"`
-	Weather        *Layer[[]Weather]          `json:"weather,omitempty"`
-	Hazards        *Layer[[]Hazard]           `json:"hazards,omitempty"`
-	Layers         map[string]Layer[*float64] `json:"-"`
+	ID             string                              `json:"@id,omitempty"`
+	Type           string                              `json:"@type,omitempty"`
+	Context        json.RawMessage                     `json:"@context,omitempty"`
+	Geometry       string                              `json:"geometry,omitempty"`
+	UpdateTime     string                              `json:"updateTime"`
+	ValidTimes     string                              `json:"validTimes"`
+	Elevation      QuantitativeValue                   `json:"elevation"`
+	ForecastOffice string                              `json:"forecastOffice"`
+	GridID         string                              `json:"gridId"`
+	GridX          int                                 `json:"gridX"`
+	GridY          int                                 `json:"gridY"`
+	Weather        *GridpointLayer[[]GridpointWeather] `json:"weather,omitempty"`
+	Hazards        *GridpointLayer[[]GridpointHazard]  `json:"hazards,omitempty"`
+	Layers         map[string]GridpointLayer[*float64] `json:"-"`
 }
 
 type gridpointFields Gridpoint
@@ -95,9 +98,9 @@ func (g *Gridpoint) UnmarshalJSON(data []byte) error {
 	for _, key := range gridpointKeys {
 		delete(properties, key)
 	}
-	fields.Layers = make(map[string]Layer[*float64], len(properties))
+	fields.Layers = make(map[string]GridpointLayer[*float64], len(properties))
 	for name, raw := range properties {
-		var layer Layer[*float64]
+		var layer GridpointLayer[*float64]
 		if err := json.Unmarshal(raw, &layer); err != nil {
 			return fmt.Errorf("grid layer %q: %w", name, err)
 		}
@@ -139,9 +142,9 @@ var gridpointKeys = [...]string{
 }
 
 // Get fetches a discovered forecastGridData URL (or API path).
-func Get(ctx context.Context, client *nws.Client, resource string) (*nws.Feature[Gridpoint], error) {
-	var result nws.Feature[Gridpoint]
-	if err := client.Get(ctx, resource, nil, &result); err != nil {
+func (s *GridpointsService) Get(ctx context.Context, resource string) (*Feature[Gridpoint], error) {
+	var result Feature[Gridpoint]
+	if err := s.client.Get(ctx, resource, nil, &result); err != nil {
 		return nil, err
 	}
 	return &result, nil
