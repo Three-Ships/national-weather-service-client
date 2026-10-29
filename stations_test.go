@@ -28,7 +28,7 @@ func TestStationMetadata(t *testing.T) {
 		}
 		io.WriteString(w, `{"type":"FeatureCollection","features":[{"type":"Feature","properties":{"stationIdentifier":"KDCA","name":"Washington","timeZone":"America/New_York","elevation":{"value":3,"unitCode":"wmoUnit:m"}}}],"pagination":{"next":"https://api.weather.gov/stations?cursor=next"},"observationStations":["https://api.weather.gov/stations/KDCA"]}`)
 	})
-	got, err := c.Stations.List(context.Background(), "/gridpoints/LWX/97,71/stations", nil)
+	got, _, err := c.Stations.List(context.Background(), "/gridpoints/LWX/97,71/stations", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +46,7 @@ func TestSingleStation(t *testing.T) {
 		}
 		io.WriteString(w, `{"type":"Feature","properties":{"stationIdentifier":"KDCA","name":"Washington","timeZone":"America/New_York","elevation":{"value":3,"unitCode":"wmoUnit:m"}}}`)
 	})
-	got, err := c.Stations.Get(t.Context(), "id/with?query")
+	got, _, err := c.Stations.Get(t.Context(), "id/with?query")
 	if err != nil || got == nil || got.Properties.StationIdentifier != "KDCA" || got.Properties.Elevation.Value == nil || *got.Properties.Elevation.Value != 3 {
 		t.Fatalf("station=%+v error=%v", got, err)
 	}
@@ -62,35 +62,35 @@ func TestStationsInputValidation(t *testing.T) {
 		{
 			name: "station metadata", values: invalidIDs,
 			request: func(ctx context.Context, client *nws.Client, value string) (bool, error) {
-				result, err := client.Stations.Get(ctx, value)
+				result, _, err := client.Stations.Get(ctx, value)
 				return result == nil, err
 			},
 		},
 		{
 			name: "observation history", values: invalidIDs,
 			request: func(ctx context.Context, client *nws.Client, value string) (bool, error) {
-				result, err := client.Stations.ListObservations(ctx, value, nil)
+				result, _, err := client.Stations.ListObservations(ctx, value, nil)
 				return result == nil, err
 			},
 		},
 		{
 			name: "latest observation", values: invalidIDs,
 			request: func(ctx context.Context, client *nws.Client, value string) (bool, error) {
-				result, err := client.Stations.GetLatestObservation(ctx, value, nil)
+				result, _, err := client.Stations.GetLatestObservation(ctx, value, nil)
 				return result == nil, err
 			},
 		},
 		{
 			name: "observation by time: station ID", values: invalidIDs,
 			request: func(ctx context.Context, client *nws.Client, value string) (bool, error) {
-				result, err := client.Stations.GetObservation(ctx, value, "2026-01-01T00:00:00Z")
+				result, _, err := client.Stations.GetObservation(ctx, value, "2026-01-01T00:00:00Z")
 				return result == nil, err
 			},
 		},
 		{
 			name: "observation by time: timestamp", values: []string{"", ".", "..", "latest", "2026-01-01", "2026-02-30T00:00:00Z"},
 			request: func(ctx context.Context, client *nws.Client, value string) (bool, error) {
-				result, err := client.Stations.GetObservation(ctx, "KDCA", value)
+				result, _, err := client.Stations.GetObservation(ctx, "KDCA", value)
 				return result == nil, err
 			},
 		},

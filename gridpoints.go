@@ -142,10 +142,11 @@ var gridpointKeys = [...]string{
 }
 
 // Get fetches a discovered forecastGridData URL (or API path).
-func (s *GridpointsService) Get(ctx context.Context, resource string) (*Feature[Gridpoint], error) {
+func (s *GridpointsService) Get(ctx context.Context, resource string) (*Feature[Gridpoint], *Response, error) {
 	var result Feature[Gridpoint]
-	if err := s.client.Get(ctx, resource, nil, &result); err != nil {
-		return nil, err
+	response, err := s.client.Get(ctx, resource, nil, &result)
+	if err != nil {
+		return nil, response, err
 	}
-	return &result, nil
+	return &result, response, nil
 }

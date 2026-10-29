@@ -33,7 +33,7 @@ func ExampleAlertsService_List() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	page, err := client.Alerts.List(ctx, url.Values{"area": {"DC"}, "status": {"actual"}})
+	page, _, err := client.Alerts.List(ctx, url.Values{"area": {"DC"}, "status": {"actual"}})
 	if err != nil {
 		panic(err)
 	}
@@ -47,7 +47,7 @@ func ExampleAlertsService_List() {
 		// Next contains the continuation query; do not reapply initial filters.
 		// Decode into a fresh collection so omitted metadata cannot remain stale.
 		var next nws.AlertCollection
-		if err := client.Get(ctx, page.Pagination.Next, nil, &next); err != nil {
+		if _, err := client.Get(ctx, page.Pagination.Next, nil, &next); err != nil {
 			panic(err)
 		}
 		page = &next

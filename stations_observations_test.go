@@ -20,17 +20,17 @@ func TestObservationsKeepSourceFields(t *testing.T) {
 	for _, tt := range []struct {
 		name     string
 		resource string
-		request  func(*nws.Client) (*nws.Feature[nws.Observation], error)
+		request  func(*nws.Client) (*nws.Feature[nws.Observation], *nws.Response, error)
 	}{
 		{
 			name: "latest", resource: "/stations/KDCA/observations/latest?require_qc=true",
-			request: func(c *nws.Client) (*nws.Feature[nws.Observation], error) {
+			request: func(c *nws.Client) (*nws.Feature[nws.Observation], *nws.Response, error) {
 				return c.Stations.GetLatestObservation(t.Context(), "KDCA", url.Values{"require_qc": {"true"}})
 			},
 		},
 		{
 			name: "timestamp", resource: "/stations/KDCA/observations/2026-01-01T07:00:00.123-05:00",
-			request: func(c *nws.Client) (*nws.Feature[nws.Observation], error) {
+			request: func(c *nws.Client) (*nws.Feature[nws.Observation], *nws.Response, error) {
 				return c.Stations.GetObservation(t.Context(), "KDCA", "2026-01-01T07:00:00.123-05:00")
 			},
 		},
@@ -42,7 +42,7 @@ func TestObservationsKeepSourceFields(t *testing.T) {
 				}
 				w.Write(body)
 			})
-			got, err := tt.request(c)
+			got, _, err := tt.request(c)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -90,7 +90,7 @@ func TestObservationHistory(t *testing.T) {
 		}
 		w.Write(collection)
 	})
-	got, err := c.Stations.ListObservations(t.Context(), "KDCA", url.Values{
+	got, _, err := c.Stations.ListObservations(t.Context(), "KDCA", url.Values{
 		"start": {"2026-01-01T00:00:00Z"}, "end": {"2026-01-02T00:00:00Z"}, "limit": {"10"}, "cursor": {"next"},
 	})
 	if err != nil {
@@ -105,7 +105,7 @@ func TestNullCloudLayers(t *testing.T) {
 	c := newStationsTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, `{"type":"Feature","properties":{"cloudLayers":null}}`)
 	})
-	got, err := c.Stations.GetLatestObservation(t.Context(), "KDCA", nil)
+	got, _, err := c.Stations.GetLatestObservation(t.Context(), "KDCA", nil)
 	if err != nil || got == nil || got.Properties.CloudLayers != nil {
 		t.Fatalf("result=%+v error=%v", got, err)
 	}

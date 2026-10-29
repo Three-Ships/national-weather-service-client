@@ -13,7 +13,7 @@ func TestZoneForecast(t *testing.T) {
 		}
 		io.WriteString(w, `{"type":"Feature","geometry":null,"properties":{"zone":"https://api.weather.gov/zones/forecast/DCZ001","updated":"2026-01-01T12:00:00+00:00","periods":[{"number":1,"name":"Today","detailedForecast":"Sunny."}]}}`)
 	})
-	got, err := c.Zones.GetForecast(t.Context(), "forecast", "id/with?query")
+	got, _, err := c.Zones.GetForecast(t.Context(), "forecast", "id/with?query")
 	if err != nil || got == nil || got.Properties.Zone != "https://api.weather.gov/zones/forecast/DCZ001" ||
 		got.Properties.Updated != "2026-01-01T12:00:00+00:00" || len(got.Properties.Periods) != 1 ||
 		got.Properties.Periods[0].Number != 1 || got.Properties.Periods[0].DetailedForecast != "Sunny." {

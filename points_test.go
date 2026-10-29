@@ -22,7 +22,7 @@ func TestPointDiscovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := c.Points.Get(context.Background(), 38.897699, -77.036501)
+	got, _, err := c.Points.Get(context.Background(), 38.897699, -77.036501)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +58,7 @@ func TestInvalidCoordinates(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if _, err := c.Points.Get(context.Background(), tt.lat, tt.lon); err == nil {
+			if _, _, err := c.Points.Get(context.Background(), tt.lat, tt.lon); err == nil {
 				t.Fatal("expected coordinate error")
 			}
 		})

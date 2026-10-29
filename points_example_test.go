@@ -13,6 +13,7 @@ import (
 func ExamplePointsService_Get() {
 	// A local server keeps this example independent of live weather data.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "public, max-age=300")
 		io.WriteString(w, `{"type":"Feature","properties":{"gridId":"LWX","timeZone":"America/New_York","forecastGridData":"https://api.weather.gov/gridpoints/LWX/97,71"}}`)
 	}))
 	defer server.Close()
@@ -20,13 +21,15 @@ func ExamplePointsService_Get() {
 	if err != nil {
 		panic(err)
 	}
-	point, err := client.Points.Get(context.Background(), 38.8977, -77.0365)
+	point, response, err := client.Points.Get(context.Background(), 38.8977, -77.0365)
 	if err != nil {
 		panic(err)
 	}
+	fmt.Println(response.Header.Get("Cache-Control"))
 	fmt.Println(point.Properties.TimeZone)
 	fmt.Println(point.Properties.ForecastGridData)
 	// Output:
+	// public, max-age=300
 	// America/New_York
 	// https://api.weather.gov/gridpoints/LWX/97,71
 }

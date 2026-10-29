@@ -47,7 +47,7 @@ func ExampleClient_Get() {
 	var result struct {
 		Glossary []struct{ Term, Definition string }
 	}
-	if err := client.Get(context.Background(), "/glossary", nil, &result); err != nil {
+	if _, err := client.Get(context.Background(), "/glossary", nil, &result); err != nil {
 		panic(err)
 	}
 	fmt.Println(result.Glossary[0].Term)
@@ -127,7 +127,7 @@ func TestGetRequests(t *testing.T) {
 			client := newTestClient(t, WithBaseURL(server.URL+"/api"))
 			before := tt.query.Encode()
 			var got struct{ Glossary []struct{ Term string } }
-			if err := client.Get(t.Context(), tt.resource, tt.query, &got); err != nil {
+			if _, err := client.Get(t.Context(), tt.resource, tt.query, &got); err != nil {
 				t.Fatal(err)
 			}
 			if len(got.Glossary) != 1 || got.Glossary[0].Term != "rain" {
@@ -246,7 +246,7 @@ func TestTransportRetriesAndBodyOwnership(t *testing.T) {
 		return &http.Response{StatusCode: status, Header: make(http.Header), Body: trackedBody{Reader: strings.NewReader(body), closed: &closed}}, nil
 	})}))
 	var got struct{ OK bool }
-	if err := c.Get(context.Background(), "/test", nil, &got); err != nil {
+	if _, err := c.Get(context.Background(), "/test", nil, &got); err != nil {
 		t.Fatal(err)
 	}
 	if calls != 3 || closed != 2 || !got.OK {
@@ -286,7 +286,7 @@ func TestResponseFailures(t *testing.T) {
 				return &http.Response{StatusCode: tt.status, Header: make(http.Header), Body: trackedBody{Reader: reader, closed: &closed}}, nil
 			})}))
 			var dst any
-			err := client.Get(t.Context(), "/test", nil, &dst)
+			_, err := client.Get(t.Context(), "/test", nil, &dst)
 			var failure *RequestError
 			if !errors.As(err, &failure) || failure.StatusCode != tt.status || failure.Attempts != tt.wantAttempts ||
 				failure.Retryable != tt.retryable || calls != tt.wantAttempts || closed != tt.wantAttempts || len(failure.Body) != tt.wantBodyLength {
@@ -447,7 +447,7 @@ func TestThreeRedirectsInOneAttempt(t *testing.T) {
 	client := newTestClient(t, WithBaseURL(server.URL),
 		WithRetryPolicy(RetryPolicy{MaxAttempts: 1, InitialDelay: time.Nanosecond, MaxDelay: time.Nanosecond}))
 	var dst any
-	err := client.Get(t.Context(), "/start", nil, &dst)
+	_, err := client.Get(t.Context(), "/start", nil, &dst)
 	var failure *RequestError
 	if !errors.As(err, &failure) || failure.Attempts != 1 || failure.StatusCode != 200 ||
 		failure.Retryable || failure.URL != server.URL+"/hop/3" || calls != 4 {
@@ -492,7 +492,7 @@ func TestRawJSONPreservesUnknownFields(t *testing.T) {
 	var got struct {
 		Properties struct{ Periods []json.RawMessage }
 	}
-	if err := c.Get(context.Background(), "/forecast", nil, &got); err != nil {
+	if _, err := c.Get(context.Background(), "/forecast", nil, &got); err != nil {
 		t.Fatal(err)
 	}
 	if len(got.Properties.Periods) != 1 || !strings.Contains(string(got.Properties.Periods[0]), "newField") {
@@ -533,7 +533,7 @@ func TestGetNegotiatesJSONFormats(t *testing.T) {
 			var result struct {
 				Value int `json:"value"`
 			}
-			if err := c.Get(t.Context(), "/resource", nil, &result); err != nil || result.Value != 42 {
+			if _, err := c.Get(t.Context(), "/resource", nil, &result); err != nil || result.Value != 42 {
 				t.Fatalf("result=%+v error=%v", result, err)
 			}
 		})

@@ -80,42 +80,45 @@ type ObservationCollection struct {
 
 // ListObservations returns station history with NWS query parameters such as
 // start, end, limit, and cursor. No time window or quality filter is imposed.
-func (s *StationsService) ListObservations(ctx context.Context, stationID string, query url.Values) (*ObservationCollection, error) {
+func (s *StationsService) ListObservations(ctx context.Context, stationID string, query url.Values) (*ObservationCollection, *Response, error) {
 	if err := validateResourceID(stationID); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var result ObservationCollection
-	if err := s.client.Get(ctx, "stations/"+url.PathEscape(stationID)+"/observations", query, &result); err != nil {
-		return nil, err
+	response, err := s.client.Get(ctx, "stations/"+url.PathEscape(stationID)+"/observations", query, &result)
+	if err != nil {
+		return nil, response, err
 	}
-	return &result, nil
+	return &result, response, nil
 }
 
 // GetLatestObservation accepts the NWS require_qc query parameter. It does not
 // impose a quality-control requirement on callers.
-func (s *StationsService) GetLatestObservation(ctx context.Context, stationID string, query url.Values) (*Feature[Observation], error) {
+func (s *StationsService) GetLatestObservation(ctx context.Context, stationID string, query url.Values) (*Feature[Observation], *Response, error) {
 	if err := validateResourceID(stationID); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var result Feature[Observation]
-	if err := s.client.Get(ctx, "stations/"+url.PathEscape(stationID)+"/observations/latest", query, &result); err != nil {
-		return nil, err
+	response, err := s.client.Get(ctx, "stations/"+url.PathEscape(stationID)+"/observations/latest", query, &result)
+	if err != nil {
+		return nil, response, err
 	}
-	return &result, nil
+	return &result, response, nil
 }
 
 // GetObservation requires an RFC3339 timestamp. Its original offset and precision
 // are retained in the request; invalid timestamps fail before HTTP.
-func (s *StationsService) GetObservation(ctx context.Context, stationID, timestamp string) (*Feature[Observation], error) {
+func (s *StationsService) GetObservation(ctx context.Context, stationID, timestamp string) (*Feature[Observation], *Response, error) {
 	if err := validateResourceID(stationID); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if _, err := time.Parse(time.RFC3339, timestamp); err != nil {
-		return nil, fmt.Errorf("nws: invalid observation timestamp: %w", err)
+		return nil, nil, fmt.Errorf("nws: invalid observation timestamp: %w", err)
 	}
 	var result Feature[Observation]
-	if err := s.client.Get(ctx, "stations/"+url.PathEscape(stationID)+"/observations/"+url.PathEscape(timestamp), nil, &result); err != nil {
-		return nil, err
+	response, err := s.client.Get(ctx, "stations/"+url.PathEscape(stationID)+"/observations/"+url.PathEscape(timestamp), nil, &result)
+	if err != nil {
+		return nil, response, err
 	}
-	return &result, nil
+	return &result, response, nil
 }

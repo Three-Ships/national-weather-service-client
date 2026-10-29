@@ -106,52 +106,57 @@ type AlertEventTypes struct {
 }
 
 // CountActive returns the API's unfiltered active-alert counts.
-func (s *AlertsService) CountActive(ctx context.Context) (*ActiveAlertCounts, error) {
+func (s *AlertsService) CountActive(ctx context.Context) (*ActiveAlertCounts, *Response, error) {
 	var result ActiveAlertCounts
-	if err := s.client.Get(ctx, "alerts/active/count", nil, &result); err != nil {
-		return nil, err
+	response, err := s.client.Get(ctx, "alerts/active/count", nil, &result)
+	if err != nil {
+		return nil, response, err
 	}
-	return &result, nil
+	return &result, response, nil
 }
 
 // ListTypes returns recognized event names without treating the list as a fixed
 // enum enforced by the client.
-func (s *AlertsService) ListTypes(ctx context.Context) (*AlertEventTypes, error) {
+func (s *AlertsService) ListTypes(ctx context.Context) (*AlertEventTypes, *Response, error) {
 	var result AlertEventTypes
-	if err := s.client.Get(ctx, "alerts/types", nil, &result); err != nil {
-		return nil, err
+	response, err := s.client.Get(ctx, "alerts/types", nil, &result)
+	if err != nil {
+		return nil, response, err
 	}
-	return &result, nil
+	return &result, response, nil
 }
 
 // Get fetches an alert by its NWS identifier, not its API URL.
-func (s *AlertsService) Get(ctx context.Context, id string) (*Feature[Alert], error) {
+func (s *AlertsService) Get(ctx context.Context, id string) (*Feature[Alert], *Response, error) {
 	if err := validateResourceID(id); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var result Feature[Alert]
-	if err := s.client.Get(ctx, "alerts/"+url.PathEscape(id), nil, &result); err != nil {
-		return nil, err
+	response, err := s.client.Get(ctx, "alerts/"+url.PathEscape(id), nil, &result)
+	if err != nil {
+		return nil, response, err
 	}
-	return &result, nil
+	return &result, response, nil
 }
 
 // List returns one page of alerts with NWS query parameters (including cursor).
 // Follow AlertCollection.Pagination.Next with Client.Get into an AlertCollection.
-func (s *AlertsService) List(ctx context.Context, query url.Values) (*AlertCollection, error) {
+func (s *AlertsService) List(ctx context.Context, query url.Values) (*AlertCollection, *Response, error) {
 	var result AlertCollection
-	if err := s.client.Get(ctx, "alerts", query, &result); err != nil {
-		return nil, err
+	response, err := s.client.Get(ctx, "alerts", query, &result)
+	if err != nil {
+		return nil, response, err
 	}
-	return &result, nil
+	return &result, response, nil
 }
 
 // ListActive returns currently active alerts with caller-selected filters.
 // No status filter is imposed; pass status=actual to exclude exercises/tests.
-func (s *AlertsService) ListActive(ctx context.Context, query url.Values) (*AlertCollection, error) {
+func (s *AlertsService) ListActive(ctx context.Context, query url.Values) (*AlertCollection, *Response, error) {
 	var result AlertCollection
-	if err := s.client.Get(ctx, "alerts/active", query, &result); err != nil {
-		return nil, err
+	response, err := s.client.Get(ctx, "alerts/active", query, &result)
+	if err != nil {
+		return nil, response, err
 	}
-	return &result, nil
+	return &result, response, nil
 }

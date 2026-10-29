@@ -31,7 +31,7 @@ if err != nil {
 ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 defer cancel()
 
-point, err := client.Points.Get(ctx, 38.8977, -77.0365)
+point, _, err := client.Points.Get(ctx, 38.8977, -77.0365)
 if err != nil {
     return err
 }
@@ -40,7 +40,7 @@ if point.Properties.Forecast == "" {
 }
 
 // Follow the NWS link because grid assignments can change.
-forecast, err := client.Gridpoints.GetForecast(ctx, point.Properties.Forecast, nil)
+forecast, _, err := client.Gridpoints.GetForecast(ctx, point.Properties.Forecast, nil)
 if err != nil {
     return err
 }
@@ -77,6 +77,49 @@ caller-defined response types, and discovered links.
 This replaces the previous `endpoints/*` package API. Change calls such as
 `points.Get(ctx, client, lat, lon)` to `client.Points.Get(ctx, lat, lon)` and
 import response types from `nws` instead of an endpoint package.
+
+### Response metadata
+
+Resource methods return `(result, *nws.Response, error)`. The response contains the
+final URL, status, headers, and unmodified body from the successful HTTP fetch:
+
+```go
+point, response, err := client.Points.Get(ctx, latitude, longitude)
+if err != nil {
+    return err
+}
+fmt.Println(point.Properties.TimeZone, response.Header.Get("Cache-Control"))
+```
+
+Use `_` when you do not need metadata. `Client.Get` returns `(*nws.Response, error)`
+while decoding into your own type, so custom decoding shapes also retain headers:
+
+```go
+var selected struct {
+    Properties struct {
+        TimeZone string `json:"timeZone"`
+    } `json:"properties"`
+}
+response, err := client.Get(ctx, resourceURL, nil, &selected)
+if err != nil {
+    return err
+}
+fmt.Println(selected.Properties.TimeZone, response.Header.Get("ETag"))
+```
+
+On JSON decoding errors, the response is still available, but typed resource
+methods return a nil result; do not use a partially decoded `Client.Get`
+destination. Input validation and fetch failures return a nil response. HTTP
+failure details remain available through `RequestError`. Bodies are buffered and
+closed before return; callers have nothing to close. Metadata describes the final
+response, not earlier retries or redirects.
+
+The client does not cache responses or interpret cache headers. Applications own
+freshness calculations, cache limits, and stale-data policy. `Client.Fetch`
+continues to support raw bodies and non-JSON formats.
+
+This changes the return signatures from v0.1.0: add a response variable or `_` to
+resource calls, and capture or discard the response from `Client.Get`.
 
 ### Configuration
 

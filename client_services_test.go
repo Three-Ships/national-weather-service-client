@@ -16,27 +16,27 @@ import (
 func TestResourceServicesUseClientPolicy(t *testing.T) {
 	for _, tt := range []struct {
 		name, path string
-		request    func(context.Context, *nws.Client) error
+		request    func(context.Context, *nws.Client) (*nws.Response, error)
 	}{
-		{"points", "/api/points/38.8977,-77.0365", func(ctx context.Context, c *nws.Client) error {
-			_, err := c.Points.Get(ctx, 38.8977, -77.0365)
-			return err
+		{"points", "/api/points/38.8977,-77.0365", func(ctx context.Context, c *nws.Client) (*nws.Response, error) {
+			_, response, err := c.Points.Get(ctx, 38.8977, -77.0365)
+			return response, err
 		}},
-		{"gridpoints", "/api/gridpoints/LWX/97,71", func(ctx context.Context, c *nws.Client) error {
-			_, err := c.Gridpoints.Get(ctx, "gridpoints/LWX/97,71")
-			return err
+		{"gridpoints", "/api/gridpoints/LWX/97,71", func(ctx context.Context, c *nws.Client) (*nws.Response, error) {
+			_, response, err := c.Gridpoints.Get(ctx, "gridpoints/LWX/97,71")
+			return response, err
 		}},
-		{"alerts", "/api/alerts", func(ctx context.Context, c *nws.Client) error {
-			_, err := c.Alerts.List(ctx, nil)
-			return err
+		{"alerts", "/api/alerts", func(ctx context.Context, c *nws.Client) (*nws.Response, error) {
+			_, response, err := c.Alerts.List(ctx, nil)
+			return response, err
 		}},
-		{"stations", "/api/stations/KDCA", func(ctx context.Context, c *nws.Client) error {
-			_, err := c.Stations.Get(ctx, "KDCA")
-			return err
+		{"stations", "/api/stations/KDCA", func(ctx context.Context, c *nws.Client) (*nws.Response, error) {
+			_, response, err := c.Stations.Get(ctx, "KDCA")
+			return response, err
 		}},
-		{"zones", "/api/zones/forecast/DCZ001", func(ctx context.Context, c *nws.Client) error {
-			_, err := c.Zones.Get(ctx, "forecast", "DCZ001")
-			return err
+		{"zones", "/api/zones/forecast/DCZ001", func(ctx context.Context, c *nws.Client) (*nws.Response, error) {
+			_, response, err := c.Zones.Get(ctx, "forecast", "DCZ001")
+			return response, err
 		}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -50,6 +50,8 @@ func TestResourceServicesUseClientPolicy(t *testing.T) {
 					w.WriteHeader(http.StatusServiceUnavailable)
 					return
 				}
+				w.Header().Set("Cache-Control", "public, max-age=300")
+				w.Header().Set("ETag", `"final"`)
 				io.WriteString(w, `{}`)
 			}))
 			t.Cleanup(server.Close)
@@ -59,15 +61,20 @@ func TestResourceServicesUseClientPolicy(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := tt.request(t.Context(), client); err != nil {
+			response, err := tt.request(t.Context(), client)
+			if err != nil {
 				t.Fatal(err)
+			}
+			if response == nil || response.URL != server.URL+tt.path || response.StatusCode != http.StatusOK ||
+				response.Header.Get("Cache-Control") != "public, max-age=300" || response.Header.Get("ETag") != `"final"` || string(response.Body) != `{}` {
+				t.Fatalf("response=%+v", response)
 			}
 			if calls != 2 {
 				t.Fatalf("HTTP attempts=%d, want 2", calls)
 			}
 			ctx, cancel := context.WithCancel(t.Context())
 			cancel()
-			if err := tt.request(ctx, client); !errors.Is(err, context.Canceled) {
+			if response, err := tt.request(ctx, client); response != nil || !errors.Is(err, context.Canceled) {
 				t.Fatalf("canceled operation error=%v", err)
 			}
 			if calls != 2 {
@@ -94,11 +101,11 @@ func TestPointForecastDiscovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	point, err := client.Points.Get(t.Context(), 38.8977, -77.0365)
+	point, _, err := client.Points.Get(t.Context(), 38.8977, -77.0365)
 	if err != nil {
 		t.Fatal(err)
 	}
-	forecast, err := client.Gridpoints.GetForecast(t.Context(), point.Properties.Forecast, nil)
+	forecast, _, err := client.Gridpoints.GetForecast(t.Context(), point.Properties.Forecast, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

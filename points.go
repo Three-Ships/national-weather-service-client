@@ -16,16 +16,17 @@ type PointsService struct {
 // Get resolves a coordinate to NWS metadata and resource links. Coordinates are
 // rounded to four decimal places as expected by NWS. Non-finite or out-of-range
 // inputs fail before any HTTP request; linked resources require separate calls.
-func (s *PointsService) Get(ctx context.Context, latitude, longitude float64) (*Feature[Point], error) {
+func (s *PointsService) Get(ctx context.Context, latitude, longitude float64) (*Feature[Point], *Response, error) {
 	if math.IsNaN(latitude) || math.IsNaN(longitude) || math.IsInf(latitude, 0) || math.IsInf(longitude, 0) ||
 		latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180 {
-		return nil, errors.New("nws: coordinates must be finite, latitude in [-90,90], longitude in [-180,180]")
+		return nil, nil, errors.New("nws: coordinates must be finite, latitude in [-90,90], longitude in [-180,180]")
 	}
 	var result Feature[Point]
-	if err := s.client.Get(ctx, fmt.Sprintf("points/%.4f,%.4f", latitude, longitude), nil, &result); err != nil {
-		return nil, err
+	response, err := s.client.Get(ctx, fmt.Sprintf("points/%.4f,%.4f", latitude, longitude), nil, &result)
+	if err != nil {
+		return nil, response, err
 	}
-	return &result, nil
+	return &result, response, nil
 }
 
 // Point models the NWS OpenAPI Point schema used as PointGeoJson.properties.

@@ -13,7 +13,7 @@ func TestForecastSourceFormats(t *testing.T) {
 	for _, path := range []string{"/gridpoints/LWX/97,71/forecast", "/gridpoints/LWX/97,71/forecast/hourly"} {
 		t.Run(path, func(t *testing.T) {
 			c := fixtureClient(t, "forecast", path)
-			got, err := c.Gridpoints.GetForecast(context.Background(), path, url.Values{"units": {"us"}})
+			got, _, err := c.Gridpoints.GetForecast(context.Background(), path, url.Values{"units": {"us"}})
 			if err != nil {
 				t.Fatal(err)
 			}

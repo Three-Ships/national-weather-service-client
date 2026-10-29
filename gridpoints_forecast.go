@@ -57,10 +57,11 @@ type GridpointForecastPeriod struct {
 // GetForecast fetches a forecast or forecastHourly link returned by PointsService.Get.
 // query accepts NWS parameters such as units=si. Use a caller-owned transport for
 // feature-flag headers, or Client.Get for caller-defined period types.
-func (s *GridpointsService) GetForecast(ctx context.Context, resource string, query url.Values) (*Feature[GridpointForecast], error) {
+func (s *GridpointsService) GetForecast(ctx context.Context, resource string, query url.Values) (*Feature[GridpointForecast], *Response, error) {
 	var result Feature[GridpointForecast]
-	if err := s.client.Get(ctx, resource, query, &result); err != nil {
-		return nil, err
+	response, err := s.client.Get(ctx, resource, query, &result)
+	if err != nil {
+		return nil, response, err
 	}
-	return &result, nil
+	return &result, response, nil
 }
