@@ -112,8 +112,11 @@ for the complete loop. Station and observation collections follow the same patte
 ### Working with source values
 
 The client preserves NWS timestamps, ISO 8601 intervals, unit codes, and nullable
-measurements. A nil `QuantitativeValue.Value` is missing data, not zero. Parse
-timestamps and convert units in your application when needed.
+measurements. A nil `QuantitativeValue.Value` is missing data, not zero. Gridpoint
+weather strings are passed through, including unfamiliar categorical values;
+nullable fields remain nil. Grid layers can cover different time intervals, so a
+value in one layer does not imply another covers the same time. Parse timestamps
+and convert units in your application when needed.
 
 Forecast temperature and wind fields use `json.RawMessage` because NWS can return
 scalar values or quantitative-value objects depending on feature flags. The

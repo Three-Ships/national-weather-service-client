@@ -81,6 +81,29 @@ func TestGridSourceLayers(t *testing.T) {
 	}
 }
 
+func TestGridWeatherPreservesUnrecognizedValuesAndGaps(t *testing.T) {
+	const source = `{"weather":{"values":[{"validTime":"2026-01-01T12:00:00Z/PT1H","value":null},{"validTime":"2026-01-01T14:00:00Z/PT1H","value":[{"weather":"future_weather","coverage":"future_coverage","intensity":"future_intensity","attributes":["future_attribute"]}]}]}}`
+	var grid nws.Gridpoint
+	if err := json.Unmarshal([]byte(source), &grid); err != nil {
+		t.Fatal(err)
+	}
+	if grid.Weather == nil || len(grid.Weather.Values) != 2 || grid.Weather.Values[0].Value != nil || len(grid.Weather.Values[1].Value) != 1 {
+		t.Fatalf("weather = %+v", grid.Weather)
+	}
+	w := grid.Weather.Values[1].Value[0]
+	if w.Weather == nil || *w.Weather != "future_weather" || w.Coverage == nil || *w.Coverage != "future_coverage" || w.Intensity == nil || *w.Intensity != "future_intensity" || !reflect.DeepEqual(w.Attributes, []string{"future_attribute"}) {
+		t.Fatalf("weather values = %+v", w)
+	}
+	encoded, err := json.Marshal(grid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var roundTrip nws.Gridpoint
+	if err := json.Unmarshal(encoded, &roundTrip); err != nil || !reflect.DeepEqual(grid, roundTrip) {
+		t.Fatalf("weather round trip = %+v, error = %v", roundTrip.Weather, err)
+	}
+}
+
 func TestGridRejectsWrongLayerShape(t *testing.T) {
 	var g nws.Gridpoint
 	if err := json.Unmarshal([]byte(`{"temperature":{"values":[{"validTime":"start/PT1H","value":"hot"}]}}`), &g); err == nil {

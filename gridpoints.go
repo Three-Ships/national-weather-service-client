@@ -35,7 +35,9 @@ type GridpointLayer[T any] struct {
 }
 
 // GridpointWeather models an inline weather value in the NWS OpenAPI Gridpoint schema,
-// describing one expected weather phenomenon in a grid interval.
+// describing one expected weather phenomenon in a grid interval. Categorical
+// strings are passed through, including values the client does not recognize;
+// nil fields are missing data. Applications decide how to interpret them.
 //
 // Schema: https://api.weather.gov/openapi.json#/components/schemas/Gridpoint/properties/weather/properties/values/items/properties/value/items
 type GridpointWeather struct {
